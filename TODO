@@ -1,0 +1,116 @@
+# TODO
+
+## High Priority
+
+### Configuration Management
+- [ ] Implement JSON configuration file loading
+- [ ] Implement YAML configuration file loading
+- [ ] Add configuration file path flag to proxy server
+- [ ] Add configuration validation on startup
+- [ ] Support environment variable overrides
+
+### API Server Integration
+- [ ] Complete API server implementation in proxy main
+- [ ] Add endpoints for runtime configuration updates
+- [ ] Implement plugin management endpoints (load/unload)
+- [ ] Add endpoint for traffic statistics
+- [ ] Add endpoint for active connections listing
+
+### Documentation
+- [ ] Add API documentation (OpenAPI/Swagger)
+- [ ] Create plugin development guide
+- [ ] Add scripting examples and cookbook
+- [ ] Document MITM setup and CA certificate installation
+- [ ] Add troubleshooting guide
+
+### Testing
+- [ ] Add unit tests for all internal packages
+- [ ] Add integration tests for proxy functionality
+- [ ] Add tests for MITM functionality
+- [ ] Add tests for plugin system
+- [ ] Add benchmarks for performance testing
+
+## Medium Priority
+
+### Plugin System
+- [ ] Define stable plugin interface
+- [ ] Implement plugin hot-reload
+- [ ] Add plugin configuration per-plugin
+- [ ] Create example plugins (logging, auth, filtering)
+- [ ] Add plugin versioning support
+
+### Security
+- [ ] Implement TLS for management API
+- [ ] Add support for multiple API secrets/users
+- [ ] Implement request rate limiting on API
+- [ ] Add audit logging for all API operations
+- [ ] Support client certificate authentication
+
+### Performance
+- [ ] Implement connection pooling
+- [ ] Add caching layer for frequently accessed resources
+- [ ] Optimize memory usage for high-traffic scenarios
+- [ ] Add support for HTTP/2
+- [ ] Implement zero-copy where possible
+
+### Visibility & Monitoring
+- [ ] Add Prometheus metrics endpoint
+- [ ] Implement request/response logging with rotation
+- [ ] Add support for distributed tracing (OpenTelemetry)
+- [ ] Create real-time traffic dashboard
+- [ ] Add alerting for anomalous traffic patterns
+
+### DLP & Content Scanning
+- [ ] Optimize DLP pattern matching performance
+- [ ] Add support for custom DLP rule engines
+- [ ] Implement content type specific scanners
+- [ ] Add support for scanning archived/compressed content
+- [ ] Create reporting for DLP violations
+
+## Low Priority
+
+### Features
+- [ ] Add support for parent proxy chaining
+- [ ] Implement proxy authentication (basic/digest)
+- [ ] Add support for PAC file serving with dynamic generation
+- [ ] Implement WebSocket proxying
+- [ ] Add support for FTP proxy
+
+### ICAP Integration
+- [ ] Complete ICAP request modification support
+- [ ] Add ICAP response modification support
+- [ ] Implement ICAP failover handling
+- [ ] Add ICAP server health checking
+- [ ] Support multiple ICAP servers with load balancing
+
+### Scripting Engine
+- [ ] Add more built-in functions for scripts
+- [ ] Implement script hot-reload
+- [ ] Add script debugging support
+- [ ] Create script standard library
+- [ ] Add support for additional scripting languages
+
+### Operations
+- [ ] Create Docker image and Dockerfile
+- [ ] Add Kubernetes deployment manifests
+- [ ] Create systemd service file
+- [ ] Add health check endpoint
+- [ ] Implement graceful shutdown improvements
+
+### Admin Tool
+- [ ] Add interactive mode for admin CLI
+- [ ] Implement batch operations
+- [ ] Add support for output formats (JSON, YAML, table)
+- [ ] Create shell completion scripts
+- [ ] Add config file support for admin tool
+
+## Future Considerations
+
+- [ ] Multi-tenant support with isolation
+- [ ] Geographic routing and geo-fencing
+- [ ] Machine learning based traffic analysis
+- [ ] Integration with threat intelligence feeds
+- [ ] Cloud-native deployment options
+- [ ] GUI/Web interface for management
+- [ ] Mobile app for monitoring
+- [ ] Blockchain-based audit trail

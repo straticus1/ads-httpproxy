@@ -1,0 +1,17 @@
+What: "ads-httpproxy"
+Directory: /Users/ryan/development/ads-httpproxy
+Goals and needed support:
+
+	- http
+	- https
+	- grpc
+	- http-json
+	- other
+In the HTTP proxy, then have a "plugin" so to speak si we 
+need a plugin architecture
+
+- Management via cli admin tool
+- json or yaml
+- Create an API Server for easy integration
+- Ensure requests are signed for security
+

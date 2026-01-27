@@ -1,0 +1,81 @@
+# BUGS
+
+## Known Issues
+
+### Critical
+
+None currently identified.
+
+### High
+
+None currently identified.
+
+### Medium
+
+- **Mirror connection error handling**: When mirror destination is unreachable, errors are logged but the connection is not retried. This could lead to silent data loss in mirroring scenarios.
+  - Location: `cmd/proxy/main.go:36-43`
+  - Impact: Traffic mirroring may fail silently
+  - Workaround: Monitor logs for "Failed to dial mirror" errors
+
+### Low
+
+- **Configuration defaults**: The proxy uses hardcoded defaults when no configuration file is provided. This may not be suitable for all deployment scenarios.
+  - Location: `internal/config/config.go:19-29`
+  - Impact: Users must modify code or implement config file loading
+  - Workaround: Modify default values in code before building
+
+- **API secret default**: The default API secret is "changeme" which is insecure for production use.
+  - Location: `internal/config/config.go:27`
+  - Impact: Security risk if not changed
+  - Workaround: Always change API secret before deploying
+
+### Documentation
+
+- **Missing examples**: Limited examples for plugin development and scripting usage
+  - Impact: Harder for developers to extend functionality
+  - Workaround: Review source code in `internal/plugin/` and `internal/scripting/`
+
+## Feature Limitations
+
+### Current Limitations
+
+1. **Configuration Loading**: JSON/YAML configuration file loading is planned but not yet implemented. Configuration currently relies on hardcoded defaults.
+
+2. **API Server Not Started**: The API server is defined but not started in the main proxy application. Admin tool cannot currently connect.
+   - Location: `cmd/proxy/main.go`
+   - Status: Implementation pending
+
+3. **Plugin Loading**: Plugin architecture exists but no mechanism to load plugins at runtime is implemented yet.
+
+4. **No Graceful Shutdown**: While signal handling is implemented, servers don't perform graceful connection draining on shutdown.
+
+5. **Error Recovery**: Limited error recovery mechanisms for transient failures (network issues, temporary service unavailability).
+
+6. **Logging Configuration**: Logging is hardcoded to use zap defaults. No configuration options for log levels, outputs, or formats.
+
+7. **Certificate Management**: MITM CA certificate generation and management needs implementation.
+
+8. **ICAP Integration Incomplete**: ICAP client exists but integration into proxy flow is not complete.
+
+9. **DLP Scanner Not Integrated**: DLP scanner exists but is not called from proxy request/response handlers.
+
+10. **Bandwidth Limiter Not Applied**: Bandwidth limiter exists but is not applied to connections.
+
+## Reporting Bugs
+
+When reporting bugs, please include:
+
+1. Go version (`go version`)
+2. Operating system and architecture
+3. Proxy configuration being used
+4. Steps to reproduce
+5. Expected behavior
+6. Actual behavior
+7. Relevant log output
+8. Network environment details (if applicable)
+
+Please open an issue on GitHub with the bug report.
+
+## Fixed Bugs
+
+None yet (initial release).
