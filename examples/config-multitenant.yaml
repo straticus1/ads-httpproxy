@@ -1,0 +1,108 @@
+# Multi-Tenant Proxy Configuration Example
+# This shows how to configure ads-httpproxy for multi-tenant operation
+
+# Basic proxy settings
+addr: ":8080"
+socks_addr: ":1080"
+api_addr: ":9090"
+grpc_addr: ":9091"
+api_secret: "change-this-secret"
+
+# Enable modern protocols
+enable_reuseport: true  # Linux SO_REUSEPORT for multi-process
+enable_quic: true       # HTTP/3 support
+
+# Multi-Tenancy Configuration
+multi_tenant:
+  enabled: true
+
+  # Isolation Mode:
+  # - "request": Single process, tenant ID in request context (most efficient)
+  # - "namespace": Kubernetes namespace per tenant (recommended for cloud)
+  # - "process": Separate process per tenant (strongest isolation)
+  mode: "request"
+
+  # HTTP header that contains tenant ID
+  # Client must send: X-Tenant-ID: acme-corp
+  tenant_header: "X-Tenant-ID"
+
+  # Tenant Store: where tenant configs are stored
+  # - "file": Local directory with JSON/YAML files
+  # - "redis": Redis with tenant configs
+  # - "postgres": PostgreSQL database
+  # - "api": Fetch from management API
+  tenant_store: "file"
+
+  # For file-based tenant store
+  tenants_dir: "./tenants"
+
+  # Default tenant if no header provided
+  default_tenant: "default"
+
+  # Isolation Settings
+  isolation:
+    # Enforce network-level isolation (requires K8s NetworkPolicies)
+    network_policy: false
+
+    # Separate MITM CA certificate per tenant
+    separate_cas: true
+
+    # Use different Redis DB number per tenant (0-15)
+    separate_redis_db: true
+
+    # Default resource quotas (can be overridden per tenant)
+    resource_quotas:
+      max_connections: 1000
+      max_bandwidth_mbps: 100
+      max_requests_per_sec: 1000
+
+# Redis for caching & session storage
+redis:
+  enabled: true
+  addr: "localhost:6379"
+  password: ""
+  db: 0  # Base DB, tenants will use 1-15 if separate_redis_db=true
+
+# Global security settings (can be overridden per tenant)
+threat_file: "./threats.txt"
+geoip_db_file: "./GeoLite2-City.mmdb"
+
+# DNS Science threat intelligence
+dns_science:
+  enabled: true
+  api_key: "your-api-key-here"
+  feed_url: "https://feed.dnsscience.com/v1/threats"
+  refresh_interval: "1h"
+  rpc_addr: "localhost:50051"
+
+# MITM SSL Inspection (per-tenant CAs if separate_cas=true)
+ca_cert: "./ca.crt"
+ca_key: "./ca.key"
+
+# Bandwidth limiting (global, before per-tenant limits)
+bandwidth_limit: 0  # 0 = unlimited
+
+# DLP patterns (applied to all tenants unless overridden)
+dlp_patterns:
+  - 'password\s*=\s*[\w\-]+'
+  - '\d{16}'  # Credit cards
+  - '[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'  # Emails
+
+# ICAP integration for content scanning
+icap_url: ""  # e.g., icap://scanner:1344/reqmod
+
+# Scripting for custom logic
+script_file: ""  # e.g., ./policy.star
+
+# Auth (global default, can be overridden per tenant)
+auth:
+  mechanism: "none"  # none, basic, ntlm, kerberos, oidc, saml
+
+# Protocol proxies (TCP passthrough)
+rtmp_addr: ""
+rtmp_target: ""
+rtsp_addr: ""
+rtsp_target: ""
+
+# API Gateway / Reverse Proxy Routes
+routes: []

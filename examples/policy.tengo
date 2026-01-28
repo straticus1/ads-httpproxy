@@ -1,0 +1,70 @@
+/*
+ * ads-httpproxy Policy Script (Tengo)
+ * -----------------------------------
+ * This script is executed for every HTTP request.
+ *
+ * Injected Variables:
+ * - req: Map containing request details
+ *   - req.method: "GET", "POST", etc.
+ *   - req.url: Full URL string
+ *   - req.host: Host header
+ *   - req.remote: Remote IP:Port
+ *
+ * Output Variables:
+ * - block: set to 'true' to block the request
+ */
+
+fmt := import("fmt")
+text := import("text")
+times := import("times")
+
+// Default: Allow all
+block := false
+
+// 1. Block by URL Keyword (e.g. "admin", "private")
+if text.contains(req.url, "/admin") || text.contains(req.url, "/private") {
+    fmt.println("[Policy] Blocking sensitive path:", req.url)
+    block = true
+}
+
+// 2. Block by Method (e.g. Prevent DELETE or PUT on public endpoints)
+if req.method == "DELETE" {
+    fmt.println("[Policy] DELETE method not allowed from:", req.remote)
+    block = true
+}
+
+// 3. Time-based Policy (e.g. Maintenance Window)
+// Block all non-GET requests during maintenance window (e.g. late night)
+now := times.now()
+hour := now.hour()
+if hour >= 2 && hour < 4 { // 2 AM to 4 AM
+    if req.method != "GET" {
+         fmt.println("[Policy] Read-only mode active (Maintenance Window)")
+         block = true
+    }
+}
+
+// 4. Host/Domain Allowlist (Walled Garden)
+// Only allow requests to specific domains
+allowed_hosts := ["example.com", "google.com", "my-api.internal"]
+host_allowed := false
+for host in allowed_hosts {
+    if req.host == host {
+        host_allowed = true
+        break
+    }
+}
+// Uncomment to enforce:
+// if !host_allowed {
+//     fmt.println("[Policy] Host not allowed:", req.host)
+//     block = true
+// }
+
+// 5. Complex Logic: Block suspicious high-port connections unless it's a known service
+// (Assuming req.remote format is "ip:port")
+remote_str := req.remote
+// ... string parsing logic here (Tengo has standard string lib)
+
+if block {
+    fmt.println(">>> Request BLOCKED by Policy Script <<<")
+}

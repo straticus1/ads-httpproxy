@@ -1,0 +1,41 @@
+# Tenant Configuration: Startup Inc
+# File: tenants/startup-inc.yaml
+
+id: "startup-inc"
+name: "Startup Inc"
+enabled: true
+
+policies:
+  - "block-malware"
+
+# Minimal restrictions for startup
+allowed_domains: []  # Empty = allow all
+blocked_domains:
+  - "*.porn"
+  - "*.adult"
+
+# Basic security
+enable_waf: true
+enable_dlp: false  # Disabled for this tier
+
+dlp_patterns: []
+
+threat_level: "medium"
+
+# Basic auth for this tenant
+auth:
+  mechanism: "basic"
+  users:
+    admin: "password123"
+    user1: "pass456"
+
+# Lower resource limits (starter tier)
+resource_quota:
+  max_connections: 100
+  max_bandwidth_mbps: 10
+  max_requests_per_sec: 100
+
+metadata:
+  contract_tier: "starter"
+  support_level: "email"
+  billing_contact: "founder@startup-inc.com"

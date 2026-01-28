@@ -10,6 +10,7 @@ import (
 	"ads-httpproxy/internal/visibility"
 	"ads-httpproxy/pkg/logging"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
 )
 
@@ -30,7 +31,11 @@ func NewServer(cfg *config.Config, limiter *bandwidth.Limiter) *Server {
 // Start runs the API server in a background goroutine.
 func (s *Server) Start() {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/stats", s.handleStats)
+	mux.HandleFunc("/stats", s.authMiddleware(s.handleStats))
+	mux.HandleFunc("/connections", s.authMiddleware(s.handleConnections))
+	mux.HandleFunc("/config", s.authMiddleware(s.handleConfig))
+	mux.HandleFunc("/healthz", s.handleHealth)
+	mux.Handle("/metrics", promhttp.Handler())
 
 	pacHandler := pac.NewHandler(s.cfg.Addr)
 	mux.Handle("/proxy.pac", pacHandler)
@@ -53,4 +58,49 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(stats); err != nil {
 		logging.Logger.Error("Failed to encode stats", zap.Error(err))
 	}
+}
+
+func (s *Server) handleConnections(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	conns := visibility.GetActiveConnections()
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(conns); err != nil {
+		logging.Logger.Error("Failed to encode connections", zap.Error(err))
+	}
+}
+
+func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		// TODO: Implement POST for updates
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(s.cfg); err != nil {
+		logging.Logger.Error("Failed to encode config", zap.Error(err))
+	}
+}
+
+func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Public endpoints are not wrapped, so we only check here.
+		// If ApiSecret is empty (not recommended), we might allow all or block all.
+		// Assuming secured by default if secret is set.
+		if s.cfg.ApiSecret != "" {
+			apiKey := r.Header.Get("X-API-Key")
+			if apiKey != s.cfg.ApiSecret {
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+		}
+		next(w, r)
+	}
+}
+
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("OK"))
 }

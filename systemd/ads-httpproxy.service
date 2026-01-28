@@ -1,0 +1,21 @@
+[Unit]
+Description=ADS HTTP/SOCKS Proxy Service
+Documentation=https://github.com/example/ads-httpproxy
+After=network.target
+
+[Service]
+Type=simple
+User=proxyuser
+Group=proxyuser
+# Adjust path to binary and config
+ExecStart=/usr/local/bin/ads-httpproxy -config /etc/ads-httpproxy/config.yaml
+Restart=on-failure
+RestartSec=5s
+LimitNOFILE=65536
+
+# Hardening
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

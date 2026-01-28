@@ -18,15 +18,16 @@ func (l *TrackedListener) Accept() (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	IncActiveConnections()
-	return &trackedConn{Conn: c}, nil
+	id := RegisterConnection(c)
+	return &trackedConn{Conn: c, id: id}, nil
 }
 
 type trackedConn struct {
 	net.Conn
+	id string
 }
 
 func (c *trackedConn) Close() error {
-	DecActiveConnections()
+	UnregisterConnection(c.id)
 	return c.Conn.Close()
 }

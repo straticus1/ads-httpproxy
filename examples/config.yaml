@@ -1,0 +1,62 @@
+# ads-httpproxy Reference Configuration
+# -------------------------------------
+
+# Network Listeners
+addr: :8080 # HTTP Proxy Listen Address
+socks_addr: :1080 # SOCKS5 Proxy Listen Address
+admin_api_addr: :9090 # REST Admin API
+grpc_addr: :9091 # gRPC Admin & Service API
+
+# Protocol Support
+rtmp_addr: :1935
+rtmp_target: rtmp.origin.com:1935
+rtsp_addr: :8554
+rtsp_target: rtsp.origin.com:8554
+ftp_addr: :2121
+ftp_target: ftp.origin.com:21
+ssh_addr: :2222
+ssh_target: ssh.origin.com:22
+
+# Performance
+enable_reuseport: true # Enable SO_REUSEPORT for high concurrency/hot-reload
+
+# Mirroring (Optional)
+# mirror_addr: :8081       # Mirror all traffic to this address
+
+# Authentication
+auth:
+  mechanism: none # none, basic, ntlm, kerberos, oidc
+  # For Basic/NTLM (Local):
+  users:
+    admin: changeme
+
+  # For OIDC:
+  oidc:
+    issuer: https://accounts.google.com
+    client_id: my-client-id
+    client_secret: my-secret
+    redirect_url: http://proxy-url/callback
+
+# Security Policies
+threat_file: ./threats.txt # Path to IP/CIDR blocklist
+geoip_db_file: ./GeoLite2-Country.mmdb # Path to MaxMind DB
+geoip_block: [ "CN", "RU", "KP" ] # ISO Country Codes to block
+geoip_allow: [] # If set, only these are allowed
+
+# Content Inspection
+waf_enabled: true # Implicitly enabled if scanner is running
+dlp_patterns:
+# Regex patterns to detect in body/headers
+- 'password\s*=\s*\w+'
+- '\d{4}-\d{4}-\d{4}-\d{4}' # Credit Card
+
+# Advanced Integration
+icap_url: icap://scanner:1344/reqmod # ICAP Server for external scanning
+script_file: ./policy.tengo # Tengo script for custom logic
+
+# Bandwidth Management
+bandwidth_limit: 10485760 # 10 MB/s limit per connection
+
+# TLS Man-In-The-Middle
+ca_cert: ./ca.crt
+ca_key: ./ca.key

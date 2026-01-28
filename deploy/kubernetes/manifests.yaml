@@ -1,0 +1,107 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ads-httpproxy
+  labels:
+    app: ads-httpproxy
+spec:
+  replicas: 3 # High Availability
+  selector:
+    matchLabels:
+      app: ads-httpproxy
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: ads-httpproxy
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: proxy
+        image: ads-httpproxy:latest
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 8080
+        - name: socks
+          containerPort: 1080
+        - name: admin
+          containerPort: 9090
+        - name: quic
+          containerPort: 443
+          protocol: UDP
+        env:
+        - name: ADS_ADDR
+          value: ":8080"
+        - name: ADS_API_ADDR
+          value: ":9090"
+        - name: ADS_ENABLE_QUIC
+          value: "true"
+        - name: ADS_THREAT_FILE
+          value: "/etc/config/threats.txt"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: admin
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: admin
+          initialDelaySeconds: 2
+          periodSeconds: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        volumeMounts:
+        - name: config-vol
+          mountPath: /etc/config
+      volumes:
+      - name: config-vol
+        configMap:
+          name: ads-proxy-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ads-httpproxy-svc
+  annotations:
+    # Example annotation for Cloud LBs (AWS/GCP) to create internal LB
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+spec:
+  selector:
+    app: ads-httpproxy
+  type: LoadBalancer # Gives you the "Floating IP"
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+  - name: socks
+    port: 1080
+    targetPort: 1080
+  - name: quic
+    port: 443
+    targetPort: 443
+    protocol: UDP
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ads-httpproxy-pdb
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: ads-httpproxy

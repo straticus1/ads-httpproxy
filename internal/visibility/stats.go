@@ -1,10 +1,18 @@
 package visibility
 
 import (
+	"net"
 	"sync"
 	"sync/atomic"
 	"time"
 )
+
+// ConnectionInfo holds details about an active connection.
+type ConnectionInfo struct {
+	ID        string    `json:"id"`
+	Remote    string    `json:"remote"`
+	StartTime time.Time `json:"start_time"`
+}
 
 // Stats holds real-time proxy statistics.
 type Stats struct {
@@ -14,11 +22,13 @@ type Stats struct {
 	TotalBytesReceived int64
 	StartTime          time.Time
 
-	mu sync.RWMutex
+	mu          sync.RWMutex
+	Connections map[string]*ConnectionInfo
 }
 
 var globalStats = &Stats{
-	StartTime: time.Now(),
+	StartTime:   time.Now(),
+	Connections: make(map[string]*ConnectionInfo),
 }
 
 // StatsSnapshot holds a point-in-time snapshot of stats.
@@ -43,12 +53,40 @@ func GetStats() StatsSnapshot {
 	}
 }
 
-func IncActiveConnections() {
-	atomic.AddInt64(&globalStats.ActiveConnections, 1)
+// GetActiveConnections returns a list of currently active connections.
+func GetActiveConnections() []ConnectionInfo {
+	globalStats.mu.RLock()
+	defer globalStats.mu.RUnlock()
+	conns := make([]ConnectionInfo, 0, len(globalStats.Connections))
+	for _, c := range globalStats.Connections {
+		conns = append(conns, *c)
+	}
+	return conns
 }
 
-func DecActiveConnections() {
-	atomic.AddInt64(&globalStats.ActiveConnections, -1)
+func RegisterConnection(c net.Conn) string {
+	info := &ConnectionInfo{
+		ID:        c.RemoteAddr().String(), // Simple ID for now
+		Remote:    c.RemoteAddr().String(),
+		StartTime: time.Now(),
+	}
+
+	globalStats.mu.Lock()
+	defer globalStats.mu.Unlock()
+
+	globalStats.Connections[info.ID] = info
+	atomic.AddInt64(&globalStats.ActiveConnections, 1)
+	return info.ID
+}
+
+func UnregisterConnection(id string) {
+	globalStats.mu.Lock()
+	defer globalStats.mu.Unlock()
+
+	if _, ok := globalStats.Connections[id]; ok {
+		delete(globalStats.Connections, id)
+		atomic.AddInt64(&globalStats.ActiveConnections, -1)
+	}
 }
 
 func IncTotalRequests() {

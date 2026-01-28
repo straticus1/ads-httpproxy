@@ -1,0 +1,32 @@
+# Default Tenant Configuration
+# Used when no X-Tenant-ID header is provided
+
+id: "default"
+name: "Default Tenant"
+enabled: true
+
+policies: []
+
+# Very permissive by default
+allowed_domains: []
+blocked_domains:
+  - "malware.com"
+  - "phishing.com"
+
+enable_waf: true
+enable_dlp: false
+
+dlp_patterns: []
+
+threat_level: "low"
+
+auth:
+  mechanism: "none"
+
+resource_quota:
+  max_connections: 100
+  max_bandwidth_mbps: 10
+  max_requests_per_sec: 100
+
+metadata:
+  note: "Default tenant for unauthenticated/unidentified traffic"

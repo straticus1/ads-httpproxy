@@ -1,0 +1,42 @@
+version: "3.8"
+
+services:
+  proxy:
+    build: .
+    image: ads-httpproxy:latest
+    ports:
+      - "8080:8080"
+      - "1080:1080"
+      - "9090:9090" # Admin API
+      - "443:443/udp" # QUIC
+    environment:
+      - ADS_ADDR=:8080
+      - ADS_API_ADDR=:9090
+      - ADS_ENABLE_QUIC=true
+      - ADS_ENABLE_REUSEPORT=false # reuseport often fails in docker without host net
+    volumes:
+      - ./config.yaml:/app/config.yaml
+      - ./policy.star:/app/policy.star
+    restart: always
+    networks:
+      - proxy-net
+
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - proxy-net
+
+  prometheus:
+    image: prom/prometheus
+    volumes:
+      - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9091:9090"
+    networks:
+      - proxy-net
+
+networks:
+  proxy-net:
+    driver: bridge

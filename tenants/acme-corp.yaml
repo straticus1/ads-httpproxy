@@ -1,0 +1,67 @@
+# Tenant Configuration: ACME Corporation
+# File: tenants/acme-corp.yaml
+
+id: "acme-corp"
+name: "ACME Corporation"
+enabled: true
+
+# Policies to apply (these would be defined elsewhere)
+policies:
+  - "block-malware"
+  - "dlp-pii"
+  - "business-hours-only"
+
+# Domain whitelist/blacklist
+allowed_domains:
+  - "*.acme.com"
+  - "github.com"
+  - "stackoverflow.com"
+  - "*.google.com"
+
+blocked_domains:
+  - "facebook.com"
+  - "twitter.com"
+  - "*.gambling.com"
+
+# Security features
+enable_waf: true
+enable_dlp: true
+
+# Custom DLP patterns for this tenant
+dlp_patterns:
+  - 'ACME-[\d]{6}'  # Internal ID format
+  - 'confidential'
+  - 'trade secret'
+
+# Threat detection level
+# low = basic blocking
+# medium = standard detection
+# high = aggressive detection
+# paranoid = block everything suspicious
+threat_level: "high"
+
+# Tenant-specific authentication
+auth:
+  mechanism: "oidc"
+  oidc:
+    issuer: "https://auth.acme.com"
+    client_id: "ads-proxy-acme"
+    client_secret: "secret-here"
+    redirect_url: "https://proxy.acme.com/oauth/callback"
+    scopes:
+      - "openid"
+      - "email"
+      - "profile"
+
+# Resource limits for this tenant
+resource_quota:
+  max_connections: 5000
+  max_bandwidth_mbps: 500
+  max_requests_per_sec: 5000
+
+# Custom metadata
+metadata:
+  contract_tier: "enterprise"
+  support_level: "platinum"
+  billing_contact: "billing@acme.com"
+  technical_contact: "ops@acme.com"
