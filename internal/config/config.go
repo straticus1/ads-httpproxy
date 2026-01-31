@@ -12,37 +12,76 @@ import (
 
 // Config needs to be loaded from json/yaml later.
 type Config struct {
-	Addr            string            `json:"addr" yaml:"addr"`
-	SocksAddr       string            `json:"socks_addr" yaml:"socks_addr"`
-	MirrorAddr      string            `json:"mirror_addr" yaml:"mirror_addr"`
-	CaCert          string            `json:"ca_cert" yaml:"ca_cert"`
-	CaKey           string            `json:"ca_key" yaml:"ca_key"`
-	ApiAddr         string            `json:"api_addr" yaml:"api_addr"`
-	GrpcAddr        string            `json:"grpc_addr" yaml:"grpc_addr"`
-	ApiSecret       string            `json:"api_secret" yaml:"api_secret"`
-	BandwidthLimit  float64           `json:"bandwidth_limit" yaml:"bandwidth_limit"` // Bytes per second
-	IcapUrl         string            `json:"icap_url" yaml:"icap_url"`
-	DlpPatterns     []string          `json:"dlp_patterns" yaml:"dlp_patterns"`
-	ScriptFile      string            `json:"script_file" yaml:"script_file"`
-	Auth            *AuthConfig       `json:"auth" yaml:"auth"`
-	RtmpAddr        string            `json:"rtmp_addr" yaml:"rtmp_addr"`
-	RtmpTarget      string            `json:"rtmp_target" yaml:"rtmp_target"`
-	RtspAddr        string            `json:"rtsp_addr" yaml:"rtsp_addr"`
-	RtspTarget      string            `json:"rtsp_target" yaml:"rtsp_target"`
-	FtpAddr         string            `json:"ftp_addr" yaml:"ftp_addr"`
-	FtpTarget       string            `json:"ftp_target" yaml:"ftp_target"`
-	SshAddr         string            `json:"ssh_addr" yaml:"ssh_addr"`
-	SshTarget       string            `json:"ssh_target" yaml:"ssh_target"`
-	EnableReusePort bool              `json:"enable_reuseport" yaml:"enable_reuseport"`
-	EnableQUIC      bool              `json:"enable_quic" yaml:"enable_quic"`
-	ThreatFile      string            `json:"threat_file" yaml:"threat_file"` // Path to blocked IPs/CIDRs
-	GeoIPDBFile     string            `json:"geoip_db_file" yaml:"geoip_db_file"`
-	GeoIPAllow      []string          `json:"geoip_allow" yaml:"geoip_allow"`
-	GeoIPBlock      []string          `json:"geoip_block" yaml:"geoip_block"`
-	Routes          []RouteConfig     `json:"routes" yaml:"routes"`
-	DNSScience      *DNSScienceConfig `json:"dns_science" yaml:"dns_science"`
-	Redis           *RedisConfig      `json:"redis" yaml:"redis"`
-	MultiTenant     *MultiTenantConfig `json:"multi_tenant" yaml:"multi_tenant"`
+	Addr            string                    `json:"addr" yaml:"addr"`
+	DataCenter      string                    `json:"data_center" yaml:"data_center"` // For Cluster Sync
+	SocksAddr       string                    `json:"socks_addr" yaml:"socks_addr"`
+	MirrorAddr      string                    `json:"mirror_addr" yaml:"mirror_addr"`
+	CaCert          string                    `json:"ca_cert" yaml:"ca_cert"`
+	CaKey           string                    `json:"ca_key" yaml:"ca_key"`
+	ApiAddr         string                    `json:"api_addr" yaml:"api_addr"`
+	GrpcAddr        string                    `json:"grpc_addr" yaml:"grpc_addr"`
+	ApiSecret       string                    `json:"api_secret" yaml:"api_secret"`
+	BandwidthLimit  float64                   `json:"bandwidth_limit" yaml:"bandwidth_limit"` // Bytes per second
+	IcapUrl         string                    `json:"icap_url" yaml:"icap_url"`
+	DlpPatterns     []string                  `json:"dlp_patterns" yaml:"dlp_patterns"`
+	ScriptFile      string                    `json:"script_file" yaml:"script_file"`
+	Auth            *AuthConfig               `json:"auth" yaml:"auth"`
+	RtmpAddr        string                    `json:"rtmp_addr" yaml:"rtmp_addr"`
+	RtmpTarget      string                    `json:"rtmp_target" yaml:"rtmp_target"`
+	RtspAddr        string                    `json:"rtsp_addr" yaml:"rtsp_addr"`
+	RtspTarget      string                    `json:"rtsp_target" yaml:"rtsp_target"`
+	FtpAddr         string                    `json:"ftp_addr" yaml:"ftp_addr"`
+	FtpTarget       string                    `json:"ftp_target" yaml:"ftp_target"`
+	SshAddr         string                    `json:"ssh_addr" yaml:"ssh_addr"`
+	SshTarget       string                    `json:"ssh_target" yaml:"ssh_target"`
+	EnableReusePort bool                      `json:"enable_reuseport" yaml:"enable_reuseport"`
+	EnableQUIC      bool                      `json:"enable_quic" yaml:"enable_quic"`
+	ThreatFile      string                    `json:"threat_file" yaml:"threat_file"`       // Path to blocked IPs/CIDRs
+	ThreatSources   []string                  `json:"threat_sources" yaml:"threat_sources"` // List of URLs to fetch threat feeds from
+	GeoIPDBFile     string                    `json:"geoip_db_file" yaml:"geoip_db_file"`
+	GeoIPAllow      []string                  `json:"geoip_allow" yaml:"geoip_allow"`
+	GeoIPBlock      []string                  `json:"geoip_block" yaml:"geoip_block"`
+	Routes          []RouteConfig             `json:"routes" yaml:"routes"`
+	DNSScience      *DNSScienceConfig         `json:"dns_science" yaml:"dns_science"`
+	DarkAPI         *DarkAPIConfig            `json:"dark_api" yaml:"dark_api"` // New stats reporting
+	Redis           *RedisConfig              `json:"redis" yaml:"redis"`
+	Peering         *PeeringConfig            `json:"peering" yaml:"peering"` // New Distributed Caching
+	Reputation      *ReputationConfig         `json:"reputation" yaml:"reputation"`
+	MultiTenant     *MultiTenantConfig        `json:"multi_tenant" yaml:"multi_tenant"`
+	PolicyFile      string                    `json:"policy_file" yaml:"policy_file"` // Path to CEL policy file
+	UpstreamGroups  map[string]*UpstreamGroup `json:"upstream_groups" yaml:"upstream_groups"`
+	Chains          map[string]*ProxyChain    `json:"chains" yaml:"chains"`
+}
+
+type UpstreamGroup struct {
+	Type        string   `json:"type" yaml:"type"`                 // "round-robin", "failover", "random"
+	Targets     []string `json:"targets" yaml:"targets"`           // List of upstream URLs
+	HealthCheck string   `json:"health_check" yaml:"health_check"` // URL to check health (e.g. /health)
+}
+
+type ProxyChain struct {
+	Proxies []string `json:"proxies" yaml:"proxies"` // List of proxy URLs (socks5://..., http://...)
+}
+
+type ReputationConfig struct {
+	Enabled  bool   `json:"enabled" yaml:"enabled"`
+	URL      string `json:"url" yaml:"url"`         // http://localhost:8080
+	Timeout  int    `json:"timeout" yaml:"timeout"` // Milliseconds
+	FailOpen bool   `json:"fail_open" yaml:"fail_open"`
+}
+
+type PeeringConfig struct {
+	Enabled   bool     `json:"enabled" yaml:"enabled"`
+	Peers     []string `json:"peers" yaml:"peers"`
+	ICPPort   int      `json:"icp_port" yaml:"icp_port"`
+	HTCPPort  int      `json:"htcp_port" yaml:"htcp_port"`
+	Algorithm string   `json:"algorithm" yaml:"algorithm"` // "carp", "round-robin"
+}
+
+type DarkAPIConfig struct {
+	ConsoleURL  string `json:"console_url" yaml:"console_url"`
+	ReportStats bool   `json:"report_stats" yaml:"report_stats"`
+	APIKey      string `json:"api_key" yaml:"api_key"` // Uses DNSScience key if empty, or distinct
 }
 
 type RedisConfig struct {
@@ -58,6 +97,7 @@ type RouteConfig struct {
 	Upstream   string `json:"upstream" yaml:"upstream"`
 	RateLimit  int    `json:"rate_limit" yaml:"rate_limit"`   // Requests/second
 	AuthMethod string `json:"auth_method" yaml:"auth_method"` // "none", "oidc", "basic"
+	Chain      string `json:"chain" yaml:"chain"`             // Name of ProxyChain to use (optional)
 }
 
 type DNSScienceConfig struct {
@@ -96,46 +136,46 @@ type SAMLConfig struct {
 
 // MultiTenantConfig configures multi-tenancy support
 type MultiTenantConfig struct {
-	Enabled        bool              `json:"enabled" yaml:"enabled"`               // Enable multi-tenant mode
-	Mode           string            `json:"mode" yaml:"mode"`                     // "request" (default), "namespace", "process"
-	TenantHeader   string            `json:"tenant_header" yaml:"tenant_header"`   // HTTP header for tenant ID (default: X-Tenant-ID)
-	TenantStore    string            `json:"tenant_store" yaml:"tenant_store"`     // "file", "redis", "postgres", "api"
-	TenantStoreURL string            `json:"tenant_store_url" yaml:"tenant_store_url"` // Connection URL for tenant store
-	TenantsDir     string            `json:"tenants_dir" yaml:"tenants_dir"`       // Directory for tenant configs (file mode)
-	DefaultTenant  string            `json:"default_tenant" yaml:"default_tenant"` // Default tenant ID if none provided
-	Isolation      *IsolationConfig  `json:"isolation" yaml:"isolation"`           // Isolation settings
+	Enabled        bool             `json:"enabled" yaml:"enabled"`                   // Enable multi-tenant mode
+	Mode           string           `json:"mode" yaml:"mode"`                         // "request" (default), "namespace", "process"
+	TenantHeader   string           `json:"tenant_header" yaml:"tenant_header"`       // HTTP header for tenant ID (default: X-Tenant-ID)
+	TenantStore    string           `json:"tenant_store" yaml:"tenant_store"`         // "file", "redis", "postgres", "api"
+	TenantStoreURL string           `json:"tenant_store_url" yaml:"tenant_store_url"` // Connection URL for tenant store
+	TenantsDir     string           `json:"tenants_dir" yaml:"tenants_dir"`           // Directory for tenant configs (file mode)
+	DefaultTenant  string           `json:"default_tenant" yaml:"default_tenant"`     // Default tenant ID if none provided
+	Isolation      *IsolationConfig `json:"isolation" yaml:"isolation"`               // Isolation settings
 }
 
 // IsolationConfig defines tenant isolation boundaries
 type IsolationConfig struct {
-	NetworkPolicy    bool              `json:"network_policy" yaml:"network_policy"`       // Enforce network isolation
-	ResourceQuotas   *ResourceQuota    `json:"resource_quotas" yaml:"resource_quotas"`     // Default resource quotas
-	SeparateCAs      bool              `json:"separate_cas" yaml:"separate_cas"`           // Separate MITM CA per tenant
-	SeparateRedisDB  bool              `json:"separate_redis_db" yaml:"separate_redis_db"` // Use different Redis DB per tenant
+	NetworkPolicy   bool           `json:"network_policy" yaml:"network_policy"`       // Enforce network isolation
+	ResourceQuotas  *ResourceQuota `json:"resource_quotas" yaml:"resource_quotas"`     // Default resource quotas
+	SeparateCAs     bool           `json:"separate_cas" yaml:"separate_cas"`           // Separate MITM CA per tenant
+	SeparateRedisDB bool           `json:"separate_redis_db" yaml:"separate_redis_db"` // Use different Redis DB per tenant
 }
 
 // ResourceQuota defines per-tenant resource limits
 type ResourceQuota struct {
-	MaxConnections   int     `json:"max_connections" yaml:"max_connections"`     // Max concurrent connections
-	MaxBandwidthMbps float64 `json:"max_bandwidth_mbps" yaml:"max_bandwidth_mbps"` // Max bandwidth in Mbps
-	MaxRequestsPerSec int    `json:"max_requests_per_sec" yaml:"max_requests_per_sec"` // Rate limit
+	MaxConnections    int     `json:"max_connections" yaml:"max_connections"`           // Max concurrent connections
+	MaxBandwidthMbps  float64 `json:"max_bandwidth_mbps" yaml:"max_bandwidth_mbps"`     // Max bandwidth in Mbps
+	MaxRequestsPerSec int     `json:"max_requests_per_sec" yaml:"max_requests_per_sec"` // Rate limit
 }
 
 // TenantConfig represents a single tenant's configuration
 type TenantConfig struct {
-	ID              string            `json:"id" yaml:"id"`
-	Name            string            `json:"name" yaml:"name"`
-	Enabled         bool              `json:"enabled" yaml:"enabled"`
-	Policies        []string          `json:"policies" yaml:"policies"`         // Policy IDs to apply
-	AllowedDomains  []string          `json:"allowed_domains" yaml:"allowed_domains"`
-	BlockedDomains  []string          `json:"blocked_domains" yaml:"blocked_domains"`
-	EnableWAF       bool              `json:"enable_waf" yaml:"enable_waf"`
-	EnableDLP       bool              `json:"enable_dlp" yaml:"enable_dlp"`
-	DLPPatterns     []string          `json:"dlp_patterns" yaml:"dlp_patterns"`
-	ThreatLevel     string            `json:"threat_level" yaml:"threat_level"` // "low", "medium", "high", "paranoid"
-	Auth            *AuthConfig       `json:"auth" yaml:"auth"`                 // Tenant-specific auth
-	ResourceQuota   *ResourceQuota    `json:"resource_quota" yaml:"resource_quota"`
-	Metadata        map[string]string `json:"metadata" yaml:"metadata"`         // Custom metadata
+	ID             string            `json:"id" yaml:"id"`
+	Name           string            `json:"name" yaml:"name"`
+	Enabled        bool              `json:"enabled" yaml:"enabled"`
+	Policies       []string          `json:"policies" yaml:"policies"` // Policy IDs to apply
+	AllowedDomains []string          `json:"allowed_domains" yaml:"allowed_domains"`
+	BlockedDomains []string          `json:"blocked_domains" yaml:"blocked_domains"`
+	EnableWAF      bool              `json:"enable_waf" yaml:"enable_waf"`
+	EnableDLP      bool              `json:"enable_dlp" yaml:"enable_dlp"`
+	DLPPatterns    []string          `json:"dlp_patterns" yaml:"dlp_patterns"`
+	ThreatLevel    string            `json:"threat_level" yaml:"threat_level"` // "low", "medium", "high", "paranoid"
+	Auth           *AuthConfig       `json:"auth" yaml:"auth"`                 // Tenant-specific auth
+	ResourceQuota  *ResourceQuota    `json:"resource_quota" yaml:"resource_quota"`
+	Metadata       map[string]string `json:"metadata" yaml:"metadata"` // Custom metadata
 }
 
 // NewConfig returns a default configuration
@@ -163,11 +203,26 @@ func NewConfig() *Config {
 				SeparateCAs:     false,
 				SeparateRedisDB: true,
 				ResourceQuotas: &ResourceQuota{
-					MaxConnections:   1000,
-					MaxBandwidthMbps: 100,
+					MaxConnections:    1000,
+					MaxBandwidthMbps:  100,
 					MaxRequestsPerSec: 1000,
 				},
 			},
+		},
+		Peering: &PeeringConfig{
+			Enabled:   false,
+			ICPPort:   3130,
+			HTCPPort:  4827,
+			Algorithm: "carp",
+		},
+		Reputation: &ReputationConfig{
+			Enabled:  false,
+			URL:      "http://localhost:8080",
+			Timeout:  500, // 500ms default
+			FailOpen: true,
+		},
+		DarkAPI: &DarkAPIConfig{
+			ReportStats: true,
 		},
 	}
 }
@@ -256,15 +311,15 @@ func (c *Config) LoadEnv() error {
 	if v := os.Getenv("ADS_THREAT_FILE"); v != "" {
 		c.ThreatFile = v
 	}
+	if v := os.Getenv("ADS_THREAT_SOURCES"); v != "" {
+		c.ThreatSources = strings.Split(v, ",")
+	}
 	if v := os.Getenv("ADS_GEOIP_DB"); v != "" {
 		c.GeoIPDBFile = v
 	}
 	// Note: Comma separated lists for GeoIP Allow/Block in env vars could be added
 	if v := os.Getenv("ADS_GEOIP_ALLOW"); v != "" {
 		c.GeoIPAllow = strings.Split(v, ",")
-	}
-	if v := os.Getenv("ADS_GEOIP_BLOCK"); v != "" {
-		c.GeoIPBlock = strings.Split(v, ",")
 	}
 
 	// DNS Science Env Vars
@@ -325,6 +380,41 @@ func (c *Config) LoadEnv() error {
 	}
 	if v := os.Getenv("ADS_MULTITENANT_DEFAULT_TENANT"); v != "" {
 		c.MultiTenant.DefaultTenant = v
+	}
+
+	// Policy File
+	if v := os.Getenv("ADS_POLICY_FILE"); v != "" {
+		c.PolicyFile = v
+	}
+
+	// Peering Env Vars
+	if c.Peering == nil {
+		c.Peering = NewConfig().Peering
+	}
+	if v := os.Getenv("ADS_PEERING_ENABLED"); v == "true" {
+		c.Peering.Enabled = true
+	}
+	if v := os.Getenv("ADS_PEERING_PEERS"); v != "" {
+		c.Peering.Peers = strings.Split(v, ",")
+	}
+
+	// DarkAPI Env Vars
+	if c.DarkAPI == nil {
+		c.DarkAPI = &DarkAPIConfig{ReportStats: true}
+	}
+	if v := os.Getenv("ADS_DARKAPI_KEY"); v != "" {
+		c.DarkAPI.APIKey = v
+	}
+
+	// Reputation Env Vars
+	if c.Reputation == nil {
+		c.Reputation = NewConfig().Reputation
+	}
+	if v := os.Getenv("ADS_REPUTATION_ENABLED"); v == "true" {
+		c.Reputation.Enabled = true
+	}
+	if v := os.Getenv("ADS_REPUTATION_URL"); v != "" {
+		c.Reputation.URL = v
 	}
 
 	return nil

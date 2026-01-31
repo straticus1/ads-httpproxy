@@ -37,8 +37,25 @@ func NewSessionManager() *SessionManager {
 	sm := &SessionManager{
 		sessions: make(map[string]*Session),
 	}
-	// TODO: Start cleanup routine
+	go sm.StartCleanup()
 	return sm
+}
+
+// StartCleanup periodically removes expired sessions
+func (sm *SessionManager) StartCleanup() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		sm.mu.Lock()
+		now := time.Now()
+		for k, v := range sm.sessions {
+			if now.Sub(v.CreatedAt) > 1*time.Hour { // 1 Hour Session Timeout
+				delete(sm.sessions, k)
+			}
+		}
+		sm.mu.Unlock()
+	}
 }
 
 func (sm *SessionManager) Get(key string) *Session {

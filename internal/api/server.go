@@ -17,11 +17,11 @@ import (
 // Server represents the Admin API server.
 type Server struct {
 	cfg     *config.Config
-	limiter *bandwidth.Limiter
+	limiter bandwidth.Limiter
 }
 
 // NewServer creates a new Admin API server.
-func NewServer(cfg *config.Config, limiter *bandwidth.Limiter) *Server {
+func NewServer(cfg *config.Config, limiter bandwidth.Limiter) *Server {
 	return &Server{
 		cfg:     cfg,
 		limiter: limiter,
@@ -73,8 +73,26 @@ func (s *Server) handleConnections(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		// Update config
+		var newCfg config.Config
+		if err := json.NewDecoder(r.Body).Decode(&newCfg); err != nil {
+			http.Error(w, "Invalid config json", http.StatusBadRequest)
+			return
+		}
+
+		// Basic validation & apply (This is a simplified apply, deep dynamic reload is complex)
+		// For now we update the struct which might affect some readers, but restart is often needed for deep changes.
+		// However, simple flags can be toggled.
+		// TODO: Deep validation
+		*s.cfg = newCfg
+
+		logging.Logger.Info("Config updated via API")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
 	if r.Method != http.MethodGet {
-		// TODO: Implement POST for updates
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}

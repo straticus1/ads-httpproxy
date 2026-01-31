@@ -1,0 +1,21 @@
+addr: ":8888"
+api_addr: ":9999"
+policy_file: "./policy_test.yaml"
+peering:
+  enabled: true
+  icp_port: 3131
+  htcp_port: 4828
+  algorithm: "carp"
+  peers: []
+reputation:
+  enabled: true
+  url: "http://localhost:8080" # Python Service
+  timeout: 500
+  fail_open: true
+geo_ip_db_file: ""
+threat_file: ""
+bandwidth_limit: 0
+auth:
+  mechanism: "none"
+dark_api:
+  report_stats: false

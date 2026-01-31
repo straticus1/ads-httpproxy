@@ -4,15 +4,14 @@ import (
 	"bufio"
 	"context"
 	"net"
-	"net/http"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"ads-httpproxy/internal/dnscache"
+	"ads-httpproxy/internal/threat/builder"
 	"ads-httpproxy/pkg/logging"
-	"fmt"
 
 	"go.uber.org/zap"
 )
@@ -24,6 +23,7 @@ type Manager struct {
 	blockedDomains map[string]struct{}
 	dnsClient      *dnscache.Client
 	mu             sync.RWMutex
+	stopChan       chan struct{}
 }
 
 // NewManager creates a new threat manager
@@ -31,6 +31,7 @@ func NewManager() *Manager {
 	return &Manager{
 		blockedIPs:     make(map[string]struct{}),
 		blockedDomains: make(map[string]struct{}),
+		stopChan:       make(chan struct{}),
 	}
 }
 
@@ -131,93 +132,75 @@ func (m *Manager) StartAutoReload(path string, interval time.Duration) {
 	}()
 }
 
-// LoadFromDNSScience fetches the threat feed from DNS Science API
-func (m *Manager) LoadFromDNSScience(feedURL, apiKey string) error {
-	client := &http.Client{Timeout: 30 * time.Second}
-	req, err := http.NewRequest("GET", feedURL, nil)
+// LoadThreatFeeds uses the native ListBuilder to fetch and aggregate multiple sources
+func (m *Manager) LoadThreatFeeds(urls []string) error {
+	b := builder.NewListBuilder()
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	list, err := b.BuildFromFeeds(ctx, urls)
 	if err != nil {
 		return err
 	}
 
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("User-Agent", "ads-httpproxy/1.0 (Integration)")
+	// Resource Limit Check
+	const MaxNets = 100000
+	const MaxIPs = 500000
 
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
+	if len(list.Nets) > MaxNets {
+		logging.Logger.Warn("Threat feed exceeded network limit, truncating", zap.Int("count", len(list.Nets)))
+		list.Nets = list.Nets[:MaxNets]
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		logging.Logger.Error("DNS Science API failed", zap.Int("status", resp.StatusCode))
-		return fmt.Errorf("API failed with status: %d", resp.StatusCode)
-	}
-	// We assume simple list format for now (line separated IPs)
-	// If it's JSON, we would parse JSON. Let's assume text/plain compatible with LoadFromFile logic.
-	// But we need to reuse the parsing logic. Refactoring LoadFromFile to generic LoadFromReader is better.
-	// For now, let's copy parsing logic or extract it.
-	// Time constraint: I'll duplicate the scanner logic for now or extract it if I can easily.
-
-	var newNets []*net.IPNet
-	newIPs := make(map[string]struct{})
-
-	scanner := bufio.NewScanner(resp.Body)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-
-		_, network, err := net.ParseCIDR(line)
-		if err == nil {
-			newNets = append(newNets, network)
-			continue
-		}
-
-		ip := net.ParseIP(line)
-		if ip != nil {
-			newIPs[ip.String()] = struct{}{}
-			continue
-		}
+	if len(list.IPs) > MaxIPs {
+		logging.Logger.Warn("Threat feed exceeded IP limit", zap.Int("count", len(list.IPs)))
 	}
 
 	m.mu.Lock()
-	// Append or Replace? Usually threat feeds are additive if multiple sources?
-	// But Manager structure is simple. Let's just Replace for this feed or Merge?
-	// If we use LoadFromFile AND LoadFromDNSScience, we might want to MERGE.
-	// But current Manager implementation overwrites `m.blockedNets`.
-	// Let's MERGE for safety if we call multiple loaders.
-	m.blockedNets = append(m.blockedNets, newNets...)
-	for k, v := range newIPs {
-		m.blockedIPs[k] = v
-	}
+	m.blockedNets = list.Nets
+	m.blockedIPs = list.IPs
+	m.blockedDomains = list.Domains
 	m.mu.Unlock()
-
-	logging.Logger.Info("Loaded DNS Science threat feed",
-		zap.Int("new_cidrs", len(newNets)),
-		zap.Int("new_ips", len(newIPs)))
 
 	return nil
 }
 
-// StartDNSScienceSync starts a background ticker to refresh the feed
-func (m *Manager) StartDNSScienceSync(feedURL, apiKey string, interval time.Duration) {
+// LoadFromURL fetches a threat list from a single URL (Legacy wrapper)
+func (m *Manager) LoadFromURL(url string) error {
+	return m.LoadThreatFeeds([]string{url})
+}
+
+// StartSync starts a background ticker to fetch and update lists from multiple URLs
+func (m *Manager) StartSync(feedURLs []string, interval time.Duration) {
+	if len(feedURLs) == 0 {
+		return
+	}
+	// Initial Load
+	if err := m.LoadThreatFeeds(feedURLs); err != nil {
+		logging.Logger.Error("Failed initial threat sync", zap.Error(err))
+	}
+
 	ticker := time.NewTicker(interval)
 	go func() {
-		// Initial Load
-		if err := m.LoadFromDNSScience(feedURL, apiKey); err != nil {
-			logging.Logger.Error("Failed initial DNS Science sync", zap.Error(err))
-		}
-
-		for range ticker.C {
-			// Note: This naive implementation appends infinitely if we don't clear old ones.
-			// A proper implementation would need a separate store per source.
-			// But for "Integration Proof of Concept", this satisfies the requirement.
-			if err := m.LoadFromDNSScience(feedURL, apiKey); err != nil {
-				logging.Logger.Error("Failed DNS Science sync", zap.Error(err))
+		defer ticker.Stop()
+		for {
+			select {
+			case <-m.stopChan:
+				return
+			case <-ticker.C:
+				if err := m.LoadThreatFeeds(feedURLs); err != nil {
+					logging.Logger.Error("Failed threat sync", zap.Error(err))
+				} else {
+					logging.Logger.Info("Synced threat feeds", zap.Int("sources", len(feedURLs)))
+				}
 			}
 		}
 	}()
+}
+
+// StopSync stops the background sync routine
+func (m *Manager) StopSync() {
+	close(m.stopChan)
 }
 
 // StartStreaming subscribes to threat updates

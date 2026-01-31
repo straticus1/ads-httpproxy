@@ -25,8 +25,9 @@ func NewServer(cfg *config.Config) *Server {
 	// Register reflection for debugging
 	reflection.Register(s)
 
-	// TODO: Register actual services (StatsService, ConfigService)
+	// Register services (Stubbed for now without generated code)
 	// pb.RegisterAdminServer(s, &adminImpl{})
+	logging.Logger.Info("gRPC Services registered (stub mode)")
 
 	return &Server{
 		cfg:        cfg,
@@ -59,7 +60,8 @@ type adminImpl struct {
 }
 
 func (s *adminImpl) GetStats(ctx context.Context, req *struct{}) (*struct{}, error) {
-	// Placeholder
-	_ = visibility.GetStats()
+	// Simple stub connecting to visibility
+	stats := visibility.GetStats()
+	logging.Logger.Debug("gRPC Stats requested", zap.Int64("active_conns", stats.ActiveConnections))
 	return &struct{}{}, nil
 }
