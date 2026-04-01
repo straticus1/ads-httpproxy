@@ -138,13 +138,33 @@ func (s *Server) middlewarePolicy(req *http.Request, ctx *goproxy.ProxyCtx) (*ht
 	return req, nil
 }
 
-// middlewareReputation checks URL against the external Reputation Service.
+// middlewareReputation checks URL against the external Reputation Service and local feeds.
 func (s *Server) middlewareReputation(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
+	urlStr := req.URL.String()
+
+	// Check local URL reputation feeds first (faster, no network)
+	if s.feedManager != nil {
+		if entry, found := s.feedManager.Check(urlStr); found {
+			logging.Logger.Warn("Blocked by URL Reputation Feed",
+				zap.String("url", urlStr),
+				zap.String("category", entry.Category),
+				zap.Int("threat_score", entry.ThreatScore),
+				zap.Strings("sources", entry.Sources),
+				zap.Strings("tags", entry.Tags))
+
+			msg := fmt.Sprintf("Access Denied: Malicious URL Detected (%s - Score: %d) - Sources: %v",
+				entry.Category, entry.ThreatScore, entry.Sources)
+			visibility.RecordReputationBlock(entry.Category)
+			return req, goproxy.NewResponse(req, goproxy.ContentTypeText, http.StatusForbidden, msg)
+		}
+	}
+
+	// Check external reputation service (if configured)
 	if s.reputation == nil {
 		return req, nil
 	}
 
-	result, err := s.reputation.Check(req.Context(), req.URL.String())
+	result, err := s.reputation.Check(req.Context(), urlStr)
 	if err != nil {
 		// Client handles fail-open logic and logs errors.
 		return req, nil
@@ -152,7 +172,7 @@ func (s *Server) middlewareReputation(req *http.Request, ctx *goproxy.ProxyCtx) 
 
 	if result.Blocked {
 		logging.Logger.Warn("Blocked by Reputation Service",
-			zap.String("url", req.URL.String()),
+			zap.String("url", urlStr),
 			zap.String("risk_level", result.RiskLevel),
 			zap.Float64("score", result.Score),
 			zap.Strings("categories", result.Categories))
@@ -164,7 +184,7 @@ func (s *Server) middlewareReputation(req *http.Request, ctx *goproxy.ProxyCtx) 
 
 	if len(result.Categories) > 0 {
 		logging.Logger.Debug("Reputation Categories",
-			zap.String("url", req.URL.String()),
+			zap.String("url", urlStr),
 			zap.Strings("cats", result.Categories))
 	}
 

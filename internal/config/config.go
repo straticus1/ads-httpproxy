@@ -70,10 +70,29 @@ type PACConfig struct {
 }
 
 type ReputationConfig struct {
-	Enabled  bool   `json:"enabled" yaml:"enabled"`
-	URL      string `json:"url" yaml:"url"`         // http://localhost:8080
-	Timeout  int    `json:"timeout" yaml:"timeout"` // Milliseconds
-	FailOpen bool   `json:"fail_open" yaml:"fail_open"`
+	Enabled    bool     `json:"enabled" yaml:"enabled"`
+	URL        string   `json:"url" yaml:"url"`         // http://localhost:8080 (Legacy reputation service)
+	Timeout    int      `json:"timeout" yaml:"timeout"` // Milliseconds
+	FailOpen   bool     `json:"fail_open" yaml:"fail_open"`
+	Feeds      *FeedsConfig `json:"feeds" yaml:"feeds"` // URL reputation feeds
+}
+
+type FeedsConfig struct {
+	Enabled        bool     `json:"enabled" yaml:"enabled"`
+	UpdateInterval int      `json:"update_interval" yaml:"update_interval"` // Minutes
+	MaxAge         int      `json:"max_age" yaml:"max_age"`                 // Days to keep entries
+	CustomFeeds    []CustomFeed `json:"custom_feeds" yaml:"custom_feeds"`
+	EnableURLhaus  bool     `json:"enable_urlhaus" yaml:"enable_urlhaus"`     // abuse.ch malware URLs
+	EnablePhishTank bool    `json:"enable_phishtank" yaml:"enable_phishtank"` // PhishTank phishing URLs
+	EnableOpenPhish bool    `json:"enable_openphish" yaml:"enable_openphish"` // OpenPhish phishing URLs
+	EnableThreatFox bool    `json:"enable_threatfox" yaml:"enable_threatfox"` // abuse.ch ThreatFox IOCs
+}
+
+type CustomFeed struct {
+	Name     string `json:"name" yaml:"name"`
+	URL      string `json:"url" yaml:"url"`
+	Type     string `json:"type" yaml:"type"`         // plaintext, csv, json
+	Category string `json:"category" yaml:"category"` // malware, phishing, adult, gambling
 }
 
 type PeeringConfig struct {

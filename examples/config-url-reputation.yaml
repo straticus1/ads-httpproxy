@@ -1,0 +1,86 @@
+# Example configuration with URL Reputation Feeds
+# This demonstrates how to enable multiple threat intelligence sources
+# for comprehensive malware, phishing, and malicious URL detection
+
+addr: ":8080"
+api_addr: ":9090"
+
+# CA certificates for SSL interception (MITM)
+ca_cert: "certs/ca.crt"
+ca_key: "certs/ca.key"
+
+# DNS Science Integration (domain-level threat intelligence)
+dns_science:
+  enabled: true
+  rpc_addr: "localhost:50051"  # gRPC endpoint for real-time lookups
+  feed_url: "https://feed.dnsscience.com/v1/threats"
+  refresh_interval: "15m"
+
+# URL Reputation System
+reputation:
+  enabled: true
+
+  # Legacy reputation service (optional external API)
+  url: "http://localhost:8080"
+  timeout: 5000
+  fail_open: true
+
+  # URL Reputation Feeds (NEW)
+  feeds:
+    enabled: true
+    update_interval: 15  # Minutes between feed updates
+    max_age: 30         # Days to keep URL entries
+
+    # Enable public threat feeds
+    enable_urlhaus: true      # abuse.ch malware distribution URLs
+    enable_phishtank: true    # PhishTank phishing URLs
+    enable_openphish: true    # OpenPhish community feed
+    enable_threatfox: true    # abuse.ch ThreatFox IOCs
+
+    # Custom feeds (optional)
+    custom_feeds:
+      - name: "Internal Blocklist"
+        url: "https://internal.company.com/blocklist.txt"
+        type: "plaintext"
+        category: "malware"
+
+      - name: "Industry Feed"
+        url: "https://isac.industry.org/threats.csv"
+        type: "csv"
+        category: "phishing"
+
+# IP-based threat intel (legacy - still supported)
+threat_sources:
+  - "https://rules.emergingthreats.net/blockrules/compromised-ips.txt"
+  - "https://www.spamhaus.org/drop/drop.txt"
+
+# DLP Scanning
+dlp_patterns:
+  - "\\d{3}-\\d{2}-\\d{4}"  # SSN
+  - "\\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}\\b"  # Email
+
+# ThreatScript Engine
+script_file: "scripts/combined_security.star"
+
+# ICAP Virus Scanning (ClamAV)
+icap_url: "icap://localhost:1344/clamav"
+
+# Authentication
+auth:
+  mechanism: "basic"
+  users:
+    admin: "changeme"
+
+# GeoIP filtering
+geoip_db_file: "/usr/share/GeoIP/GeoLite2-Country.mmdb"
+geoip_block:
+  - "CN"
+  - "RU"
+  - "KP"
+
+# Bandwidth limiting
+bandwidth_limit: 10485760  # 10 MB/s
+
+# Enable advanced features
+enable_reuseport: true
+enable_quic: false

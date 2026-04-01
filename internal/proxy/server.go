@@ -57,6 +57,7 @@ type Server struct {
 	policyEngine   *policy.Engine
 	peerMgr        *peering.PeerManager
 	reputation     *reputation.Client
+	feedManager    *reputation.FeedManager
 	authenticator  auth.Authenticator
 	cache          *cache.Manager
 	screenshot     *screenshot.Service
@@ -154,6 +155,7 @@ func NewServer(cfg *config.Config) *Server {
 
 	// Configure Reputation Service
 	var repClient *reputation.Client
+	var feedMgr *reputation.FeedManager
 	if cfg.Reputation != nil && cfg.Reputation.Enabled {
 		repClient = reputation.NewClient(
 			cfg.Reputation.URL,
@@ -161,6 +163,75 @@ func NewServer(cfg *config.Config) *Server {
 			cfg.Reputation.FailOpen,
 		)
 		logging.Logger.Info("Reputation Service Enabled", zap.String("url", cfg.Reputation.URL))
+
+		// Initialize URL Reputation Feeds
+		if cfg.Reputation.Feeds != nil && cfg.Reputation.Feeds.Enabled {
+			feedMgr = reputation.NewFeedManager()
+			feedMgr.InitDefaultFeeds()
+
+			// Configure which default feeds to enable
+			for i := range feedMgr.Sources {
+				src := &feedMgr.Sources[i]
+				switch src.Name {
+				case "URLhaus":
+					src.Enabled = cfg.Reputation.Feeds.EnableURLhaus
+				case "PhishTank":
+					src.Enabled = cfg.Reputation.Feeds.EnablePhishTank
+				case "OpenPhish":
+					src.Enabled = cfg.Reputation.Feeds.EnableOpenPhish
+				case "ThreatFox":
+					src.Enabled = cfg.Reputation.Feeds.EnableThreatFox
+				}
+
+				if cfg.Reputation.Feeds.UpdateInterval > 0 {
+					src.UpdateFreq = time.Duration(cfg.Reputation.Feeds.UpdateInterval) * time.Minute
+				}
+			}
+
+			// Add custom feeds
+			for _, customFeed := range cfg.Reputation.Feeds.CustomFeeds {
+				parser := &reputation.PlaintextParser{
+					Category: customFeed.Category,
+					Score:    85,
+				}
+				if customFeed.Type == "csv" {
+					// Would need specific parser based on format
+					parser = &reputation.PlaintextParser{Category: customFeed.Category, Score: 85}
+				}
+
+				feedMgr.AddCustomFeed(reputation.FeedSource{
+					Name:       customFeed.Name,
+					URL:        customFeed.URL,
+					Type:       customFeed.Type,
+					Category:   customFeed.Category,
+					UpdateFreq: time.Duration(cfg.Reputation.Feeds.UpdateInterval) * time.Minute,
+					Enabled:    true,
+					Parser:     parser,
+				})
+			}
+
+			// Start syncing feeds
+			go feedMgr.StartSync(context.Background())
+
+			// Start cleanup routine
+			if cfg.Reputation.Feeds.MaxAge > 0 {
+				maxAge := time.Duration(cfg.Reputation.Feeds.MaxAge) * 24 * time.Hour
+				go func() {
+					ticker := time.NewTicker(24 * time.Hour)
+					defer ticker.Stop()
+					for range ticker.C {
+						feedMgr.Cleanup(maxAge)
+					}
+				}()
+			}
+
+			logging.Logger.Info("URL Reputation Feeds Enabled",
+				zap.Bool("urlhaus", cfg.Reputation.Feeds.EnableURLhaus),
+				zap.Bool("phishtank", cfg.Reputation.Feeds.EnablePhishTank),
+				zap.Bool("openphish", cfg.Reputation.Feeds.EnableOpenPhish),
+				zap.Bool("threatfox", cfg.Reputation.Feeds.EnableThreatFox),
+				zap.Int("custom_feeds", len(cfg.Reputation.Feeds.CustomFeeds)))
+		}
 	}
 
 	// Configure Threat Intel
@@ -263,6 +334,7 @@ func NewServer(cfg *config.Config) *Server {
 		policyEngine:  policyEngine,
 		peerMgr:       peerMgr,
 		reputation:    repClient,
+		feedManager:   feedMgr,
 		authenticator: authenticator,
 		cache:         cacheMgr,
 		screenshot:    screenshotSvc,
