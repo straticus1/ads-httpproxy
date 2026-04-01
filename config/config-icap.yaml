@@ -1,0 +1,76 @@
+# ads-httpproxy configuration with ClamAV ICAP scanning
+# Docker Compose setup
+
+# Proxy server
+addr: ":8080"
+https_addr: ":8443"
+socks_addr: ":1080"
+api_addr: ":9090"
+grpc_addr: ":9091"
+
+# Enable HTTP/3 (QUIC)
+enable_quic: true
+
+# TLS certificates (optional - for HTTPS proxy)
+# cert_file: "/app/certs/server.crt"
+# key_file: "/app/certs/server.key"
+
+# ICAP configuration - ClamAV virus scanning
+icap_url: "icap://c-icap:1344/clamav"
+
+# DNS cache integration (optional - if using dnsscienced)
+# dns_cache_addr: "dnsscienced:8080"
+
+# Threat intelligence (optional)
+# darkapi_key: "your-darkapi-key-here"
+
+# Logging
+log_level: "info"
+log_format: "json"
+
+# Performance tuning
+bandwidth_limit: 0  # 0 = unlimited
+
+# Security features
+enable_dlp: true
+enable_waf: true
+
+# DLP patterns (example)
+dlp_patterns:
+  - "(?i)(password|passwd|pwd)\\s*[:=]\\s*\\S+"
+  - "(?i)api[_-]?key\\s*[:=]\\s*[A-Za-z0-9]+"
+  - "AKIA[0-9A-Z]{16}"  # AWS Access Key
+  - "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b"  # Email
+
+# ThreatScript (optional)
+# script_file: "/app/scripts/combined_security.star"
+
+# Blocklists/Allowlists
+blocklists:
+  - name: "malware"
+    type: "domain"
+    # url: "https://example.com/blocklist.txt"
+
+# Metrics
+enable_metrics: true
+metrics_addr: ":9092"
+
+# Authentication (optional)
+# auth:
+#   enabled: true
+#   type: "basic"
+#   users:
+#     - username: "admin"
+#       password: "$2a$10$..."  # bcrypt hash
+
+# Rate limiting
+rate_limit:
+  enabled: true
+  requests_per_second: 100
+  burst: 200
+
+# Cache settings
+cache:
+  enabled: true
+  size_mb: 100
+  ttl_seconds: 3600

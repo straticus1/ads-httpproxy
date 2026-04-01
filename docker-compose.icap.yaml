@@ -1,0 +1,87 @@
+version: '3.8'
+
+services:
+  clamav:
+    image: clamav/clamav:latest
+    container_name: ads-clamav
+    restart: unless-stopped
+    ports:
+      - "3310:3310"
+    volumes:
+      - clamav-data:/var/lib/clamav
+    environment:
+      - CLAMAV_NO_FRESHCLAM=false
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/clamdcheck.sh"]
+      interval: 60s
+      retries: 3
+      start_period: 120s
+      timeout: 10s
+    networks:
+      - icap-network
+
+  c-icap:
+    image: toolarium/c-icap:latest
+    container_name: ads-c-icap
+    restart: unless-stopped
+    ports:
+      - "1344:1344"
+    depends_on:
+      clamav:
+        condition: service_healthy
+    volumes:
+      - ./config/c-icap.conf:/etc/c-icap/c-icap.conf:ro
+      - ./config/clamav_mod.conf:/etc/c-icap/clamav_mod.conf:ro
+      - icap-logs:/var/log/c-icap
+    environment:
+      - ICAP_PORT=1344
+      - CLAMD_HOST=clamav
+      - CLAMD_PORT=3310
+    networks:
+      - icap-network
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "1344"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  ads-httpproxy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ads-httpproxy
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+      - "8443:8443"
+      - "9090:9090"
+    depends_on:
+      c-icap:
+        condition: service_healthy
+    volumes:
+      - ./config/config-icap.yaml:/app/config.yaml:ro
+      - proxy-logs:/var/log/ads-httpproxy
+      - ./examples/threatscripts:/app/scripts:ro
+    environment:
+      - CONFIG_FILE=/app/config.yaml
+      - ICAP_URL=icap://c-icap:1344/clamav
+      - LOG_LEVEL=info
+    networks:
+      - icap-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9090/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  clamav-data:
+    driver: local
+  icap-logs:
+    driver: local
+  proxy-logs:
+    driver: local
+
+networks:
+  icap-network:
+    driver: bridge
