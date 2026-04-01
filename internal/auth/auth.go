@@ -82,6 +82,10 @@ func (sm *SessionManager) Delete(key string) {
 // Factory returns the appropriate Authenticator based on config
 func NewAuthenticator(cfg *config.AuthConfig, logger *zap.Logger) (Authenticator, error) {
 	switch cfg.Mechanism {
+	case "ldap":
+		return NewLDAPAuthenticator(cfg.LDAP, logger)
+	case "ad":
+		return NewActiveDirectoryAuthenticator(cfg.LDAP, logger)
 	case "ntlm":
 		return NewNTLMAuthenticator(cfg, logger), nil
 	case "kerberos":

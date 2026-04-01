@@ -1,0 +1,200 @@
+# LDAP/Active Directory Authentication Configuration
+# This example shows how to configure LDAP and AD authentication
+
+addr: ":8080"
+api_addr: ":9090"
+
+# LDAP Authentication (Generic LDAP servers)
+auth:
+  mechanism: "ldap"
+  ldap:
+    # LDAP server URL (use ldaps:// for TLS)
+    url: "ldap://ldap.example.com:389"
+
+    # Base DN for user search
+    base_dn: "ou=users,dc=example,dc=com"
+
+    # Service account credentials for binding
+    bind_dn: "cn=proxy-service,ou=services,dc=example,dc=com"
+    bind_password: "service-account-password"
+
+    # User attribute to match username (default: uid)
+    user_attribute: "uid"
+
+    # Optional: Custom LDAP filter for user search
+    # {username} will be replaced with the actual username
+    # user_filter: "(&(objectClass=inetOrgPerson)(uid={username}))"
+
+    # Optional: Require group membership
+    # Users must be in at least one of these groups
+    require_groups:
+      - "cn=proxy-users,ou=groups,dc=example,dc=com"
+      - "cn=admins,ou=groups,dc=example,dc=com"
+
+    # Use StartTLS for encryption (recommended for ldap://)
+    start_tls: true
+
+    # Skip TLS certificate verification (NOT recommended for production)
+    insecure_skip_verify: false
+
+    # Connection timeout in seconds
+    timeout: 10
+
+    # Authentication realm shown to users
+    realm: "Corporate Proxy"
+
+---
+
+# Active Directory Authentication (Microsoft AD)
+# AD uses different defaults (sAMAccountName instead of uid)
+auth:
+  mechanism: "ad"
+  ldap:
+    # AD server URL (LDAPS recommended)
+    url: "ldaps://dc.corp.example.com:636"
+
+    # Base DN for user search
+    base_dn: "dc=corp,dc=example,dc=com"
+
+    # AD service account (can use sAMAccountName or DN)
+    bind_dn: "proxy-service@corp.example.com"
+    bind_password: "ad-service-password"
+
+    # Optional: Require group membership (AD groups)
+    require_groups:
+      - "CN=Proxy Users,OU=Security Groups,DC=corp,DC=example,DC=com"
+      - "CN=Domain Admins,OU=Security Groups,DC=corp,DC=example,DC=com"
+
+    # AD-specific defaults are set automatically:
+    # - user_attribute: "sAMAccountName"
+    # - user_filter: "(&(objectClass=user)(objectCategory=person)(sAMAccountName={username}))"
+
+    timeout: 10
+    realm: "Corporate Network"
+
+---
+
+# LDAP with LDAPS (direct TLS connection)
+auth:
+  mechanism: "ldap"
+  ldap:
+    # LDAPS uses port 636 by default
+    url: "ldaps://ldap.secure.example.com:636"
+    base_dn: "ou=people,dc=secure,dc=example,dc=com"
+    bind_dn: "cn=admin,dc=secure,dc=example,dc=com"
+    bind_password: "secure-password"
+    user_attribute: "uid"
+
+    # StartTLS not needed for LDAPS
+    start_tls: false
+
+    # Verify TLS certificates in production
+    insecure_skip_verify: false
+
+    timeout: 10
+
+---
+
+# AD with Custom User Filter (for complex queries)
+auth:
+  mechanism: "ad"
+  ldap:
+    url: "ldaps://dc1.corp.example.com:636"
+    base_dn: "dc=corp,dc=example,dc=com"
+    bind_dn: "CN=Proxy Service,OU=Service Accounts,DC=corp,DC=example,DC=com"
+    bind_password: "complex-password"
+
+    # Custom filter to search enabled users only
+    user_filter: "(&(objectClass=user)(objectCategory=person)(sAMAccountName={username})(!(userAccountControl:1.2.840.113556.1.4.803:=2)))"
+
+    # Require membership in specific departments
+    require_groups:
+      - "CN=IT Department,OU=Departments,DC=corp,DC=example,DC=com"
+      - "CN=Finance Department,OU=Departments,DC=corp,DC=example,DC=com"
+
+    timeout: 15
+    realm: "Corporate Domain"
+
+---
+
+# Multi-Forest Active Directory
+# Use global catalog for cross-forest authentication
+auth:
+  mechanism: "ad"
+  ldap:
+    # Global Catalog port (3268 for LDAP, 3269 for LDAPS)
+    url: "ldaps://gc.corp.example.com:3269"
+    base_dn: "dc=corp,dc=example,dc=com"
+    bind_dn: "proxy-service@corp.example.com"
+    bind_password: "gc-service-password"
+    timeout: 10
+
+---
+
+# LDAP with OpenLDAP
+auth:
+  mechanism: "ldap"
+  ldap:
+    url: "ldap://openldap.example.com:389"
+    base_dn: "ou=users,dc=example,dc=com"
+    bind_dn: "cn=readonly,dc=example,dc=com"
+    bind_password: "readonly-password"
+
+    # OpenLDAP typically uses 'uid'
+    user_attribute: "uid"
+
+    # Filter for posixAccount
+    user_filter: "(&(objectClass=posixAccount)(uid={username}))"
+
+    # Group membership using memberOf
+    require_groups:
+      - "cn=proxy-access,ou=groups,dc=example,dc=com"
+
+    start_tls: true
+    timeout: 10
+    realm: "OpenLDAP Server"
+
+---
+
+# LDAP with FreeIPA
+auth:
+  mechanism: "ldap"
+  ldap:
+    url: "ldaps://ipa.example.com:636"
+    base_dn: "cn=users,cn=accounts,dc=example,dc=com"
+    bind_dn: "uid=proxy-service,cn=users,cn=accounts,dc=example,dc=com"
+    bind_password: "ipa-service-password"
+
+    # FreeIPA uses 'uid'
+    user_attribute: "uid"
+
+    # FreeIPA groups
+    require_groups:
+      - "cn=proxy-users,cn=groups,cn=accounts,dc=example,dc=com"
+
+    timeout: 10
+    realm: "FreeIPA Realm"
+
+# Additional proxy configuration
+bandwidth_limit: 10485760  # 10 MB/s
+
+# PAC file generation with LDAP integration
+pac:
+  bypass_domains:
+    - "localhost"
+    - "*.example.com"
+  bypass_networks:
+    - "10.0.0.0/8"
+    - "172.16.0.0/12"
+    - "192.168.0.0/16"
+
+# URL reputation feeds
+reputation:
+  enabled: true
+  feeds:
+    enabled: true
+    update_interval: 15  # minutes
+    enable_urlhaus: true
+    enable_phishtank: true
+    enable_openphish: true
+    enable_threatfox: true

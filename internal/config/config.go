@@ -134,15 +134,16 @@ type DNSScienceConfig struct {
 }
 
 type AuthConfig struct {
-	Mechanism  string            `json:"mechanism" yaml:"mechanism"`     // "none", "basic", "ntlm", "kerberos"
+	Mechanism  string            `json:"mechanism" yaml:"mechanism"`     // "none", "basic", "ntlm", "kerberos", "ldap", "ad", "oidc", "oauth2", "saml"
 	KRB5Keytab string            `json:"krb5_keytab" yaml:"krb5_keytab"` // Path to keytab
 	KRB5Conf   string            `json:"krb5_conf" yaml:"krb5_conf"`     // Path to krb5.conf (optional, defaults to /etc/krb5.conf)
-	Realm      string            `json:"realm" yaml:"realm"`             // Kerberos Realm
+	Realm      string            `json:"realm" yaml:"realm"`             // Kerberos Realm / LDAP Realm
 	Service    string            `json:"service" yaml:"service"`         // Service Principal Name (HTTP/fqdn)
 	Users      map[string]string `json:"users" yaml:"users"`             // Local users for NTLM/Basic auth (username:password)
 	OIDC       *OIDCConfig       `json:"oidc" yaml:"oidc"`
 	OAuth2     *OAuth2Config     `json:"oauth2" yaml:"oauth2"`
 	SAML       *SAMLConfig       `json:"saml" yaml:"saml"`
+	LDAP       *LDAPConfig       `json:"ldap" yaml:"ldap"`
 }
 
 type OIDCConfig struct {
@@ -164,6 +165,20 @@ type SAMLConfig struct {
 	Cert        string `json:"cert" yaml:"cert"`         // Path to SP Cert
 	Key         string `json:"key" yaml:"key"`           // Path to SP Key
 	RootURL     string `json:"root_url" yaml:"root_url"` // External URL of the proxy (e.g. https://proxy.example.com)
+}
+
+type LDAPConfig struct {
+	URL                string   `json:"url" yaml:"url"`                                       // ldap://server:389 or ldaps://server:636
+	BaseDN             string   `json:"base_dn" yaml:"base_dn"`                               // Base DN for user search (e.g., dc=example,dc=com)
+	BindDN             string   `json:"bind_dn" yaml:"bind_dn"`                               // Service account DN for binding
+	BindPassword       string   `json:"bind_password" yaml:"bind_password"`                   // Service account password
+	UserAttribute      string   `json:"user_attribute" yaml:"user_attribute"`                 // Attribute to match username (uid, sAMAccountName)
+	UserFilter         string   `json:"user_filter" yaml:"user_filter"`                       // LDAP filter for user search (supports {username} placeholder)
+	RequireGroups      []string `json:"require_groups" yaml:"require_groups"`                 // List of groups user must be member of (CN or full DN)
+	StartTLS           bool     `json:"start_tls" yaml:"start_tls"`                           // Use StartTLS for encryption
+	InsecureSkipVerify bool     `json:"insecure_skip_verify" yaml:"insecure_skip_verify"`     // Skip TLS certificate verification (not recommended)
+	Timeout            int      `json:"timeout" yaml:"timeout"`                               // Connection timeout in seconds
+	Realm              string   `json:"realm" yaml:"realm"`                                   // Authentication realm for Basic Auth challenge
 }
 
 // MultiTenantConfig configures multi-tenancy support
