@@ -80,12 +80,12 @@ type Event struct {
 	Cipher       string
 
 	// Compliance fields
-	DataClass    string       // "public", "internal", "confidential", "pii", "phi"
-	GeoLocation  string       // Country/region
-	DLPMatches   []string     // DLP patterns matched
-	ThreatScore  int          // 0-100
-	VirussDetected bool
-	VirusName    string
+	DataClass      string       // "public", "internal", "confidential", "pii", "phi"
+	GeoLocation    string       // Country/region
+	DLPMatches     []string     // DLP patterns matched
+	ThreatScore    int          // 0-100
+	VirusDetected  bool
+	VirusName      string
 
 	// Custom metadata
 	Tags         map[string]string

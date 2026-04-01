@@ -44,19 +44,23 @@ func (p *URLFilterPlugin) Name() string {
 }
 
 func (p *URLFilterPlugin) OnRequest(req *http.Request, ctx *plugin.Context) (*http.Request, *http.Response) {
+	if req == nil || req.URL == nil {
+		return req, nil
+	}
+
 	host := req.URL.Hostname()
 	fullURL := req.URL.String()
 
-	// Check whitelist first
+	// Check whitelist first (exact match or subdomain)
 	for _, allowed := range p.AllowedDomains {
-		if strings.Contains(host, allowed) {
+		if matchesDomain(host, allowed) {
 			return req, nil
 		}
 	}
 
-	// Check blocked domains
+	// Check blocked domains (exact match or subdomain)
 	for _, blocked := range p.BlockedDomains {
-		if strings.Contains(host, blocked) {
+		if matchesDomain(host, blocked) {
 			logging.Logger.Warn("Plugin: Blocked domain",
 				zap.String("plugin", p.Name()),
 				zap.String("domain", host),
@@ -77,6 +81,25 @@ func (p *URLFilterPlugin) OnRequest(req *http.Request, ctx *plugin.Context) (*ht
 	}
 
 	return req, nil
+}
+
+// matchesDomain checks if host matches domain (exact or subdomain)
+// e.g., "evil.com" matches "evil.com" and "www.evil.com" but not "notevil.com"
+func matchesDomain(host, domain string) bool {
+	host = strings.ToLower(host)
+	domain = strings.ToLower(domain)
+
+	// Exact match
+	if host == domain {
+		return true
+	}
+
+	// Subdomain match (must have . prefix)
+	if strings.HasSuffix(host, "."+domain) {
+		return true
+	}
+
+	return false
 }
 
 func (p *URLFilterPlugin) OnResponse(resp *http.Response, ctx *plugin.Context) *http.Response {

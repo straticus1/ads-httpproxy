@@ -34,6 +34,10 @@ func (p *ContentTypeBlockerPlugin) OnRequest(req *http.Request, ctx *plugin.Cont
 }
 
 func (p *ContentTypeBlockerPlugin) OnResponse(resp *http.Response, ctx *plugin.Context) *http.Response {
+	if resp == nil || resp.Header == nil {
+		return resp
+	}
+
 	contentType := resp.Header.Get("Content-Type")
 	if contentType == "" {
 		return resp
@@ -42,23 +46,31 @@ func (p *ContentTypeBlockerPlugin) OnResponse(resp *http.Response, ctx *plugin.C
 	// Check if content type is blocked
 	for _, blocked := range p.BlockedTypes {
 		if strings.Contains(strings.ToLower(contentType), strings.ToLower(blocked)) {
+			url := ""
+			if resp.Request != nil && resp.Request.URL != nil {
+				url = resp.Request.URL.String()
+			}
+
 			logging.Logger.Warn("Plugin: Blocked content type",
 				zap.String("plugin", p.Name()),
 				zap.String("content_type", contentType),
-				zap.String("url", resp.Request.URL.String()))
+				zap.String("url", url))
 
-			// Create blocked response
-			blockedResp := goproxy.NewResponse(resp.Request,
-				goproxy.ContentTypeText,
-				http.StatusForbidden,
-				p.BlockMessage)
-
-			// Close original response body
+			// Close original response body safely
 			if resp.Body != nil {
 				resp.Body.Close()
 			}
 
-			return blockedResp
+			// Create blocked response
+			if resp.Request != nil {
+				return goproxy.NewResponse(resp.Request,
+					goproxy.ContentTypeText,
+					http.StatusForbidden,
+					p.BlockMessage)
+			}
+
+			// If no request, just return nil to signal error
+			return nil
 		}
 	}
 

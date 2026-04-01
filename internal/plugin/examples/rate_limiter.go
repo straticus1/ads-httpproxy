@@ -1,6 +1,7 @@
 package examples
 
 import (
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -18,6 +19,8 @@ type RateLimiterPlugin struct {
 	Window      time.Duration // Time window
 	mu          sync.RWMutex
 	clients     map[string]*clientRateLimit
+	shutdown    chan struct{}
+	wg          sync.WaitGroup
 }
 
 type clientRateLimit struct {
@@ -26,16 +29,31 @@ type clientRateLimit struct {
 }
 
 func NewRateLimiterPlugin(maxRequests int, window time.Duration) *RateLimiterPlugin {
+	if maxRequests <= 0 {
+		maxRequests = 100
+	}
+	if window <= 0 {
+		window = 1 * time.Minute
+	}
+
 	plugin := &RateLimiterPlugin{
 		MaxRequests: maxRequests,
 		Window:      window,
 		clients:     make(map[string]*clientRateLimit),
+		shutdown:    make(chan struct{}),
 	}
 
 	// Start cleanup goroutine
+	plugin.wg.Add(1)
 	go plugin.cleanup()
 
 	return plugin
+}
+
+// Shutdown gracefully stops the rate limiter
+func (p *RateLimiterPlugin) Shutdown() {
+	close(p.shutdown)
+	p.wg.Wait()
 }
 
 func (p *RateLimiterPlugin) Name() string {
@@ -43,7 +61,34 @@ func (p *RateLimiterPlugin) Name() string {
 }
 
 func (p *RateLimiterPlugin) OnRequest(req *http.Request, ctx *plugin.Context) (*http.Request, *http.Response) {
-	clientIP := req.RemoteAddr
+	if req == nil {
+		return req, nil
+	}
+
+	// Extract IP address without port
+	clientIP, _, err := net.SplitHostPort(req.RemoteAddr)
+	if err != nil {
+		// If no port, use RemoteAddr as-is
+		clientIP = req.RemoteAddr
+	}
+
+	// Check X-Forwarded-For header for real client IP
+	if xff := req.Header.Get("X-Forwarded-For"); xff != "" {
+		// Use first IP in X-Forwarded-For chain
+		if idx := len(xff); idx > 0 {
+			if commaIdx := 0; commaIdx < idx {
+				for i, c := range xff {
+					if c == ',' {
+						clientIP = xff[:i]
+						break
+					}
+				}
+				if commaIdx == 0 {
+					clientIP = xff
+				}
+			}
+		}
+	}
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -84,17 +129,24 @@ func (p *RateLimiterPlugin) OnResponse(resp *http.Response, ctx *plugin.Context)
 
 // cleanup removes expired client entries
 func (p *RateLimiterPlugin) cleanup() {
+	defer p.wg.Done()
+
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		p.mu.Lock()
-		now := time.Now()
-		for ip, client := range p.clients {
-			if now.After(client.resetTime) {
-				delete(p.clients, ip)
+	for {
+		select {
+		case <-p.shutdown:
+			return
+		case <-ticker.C:
+			p.mu.Lock()
+			now := time.Now()
+			for ip, client := range p.clients {
+				if now.After(client.resetTime) {
+					delete(p.clients, ip)
+				}
 			}
+			p.mu.Unlock()
 		}
-		p.mu.Unlock()
 	}
 }

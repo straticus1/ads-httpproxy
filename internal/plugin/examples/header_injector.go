@@ -24,17 +24,29 @@ func (p *HeaderInjectorPlugin) Name() string {
 }
 
 func (p *HeaderInjectorPlugin) OnRequest(req *http.Request, ctx *plugin.Context) (*http.Request, *http.Response) {
+	if req == nil || req.Header == nil {
+		return req, nil
+	}
+
 	// Inject custom headers into request
 	for key, value := range p.RequestHeaders {
-		req.Header.Set(key, value)
+		if key != "" && value != "" {
+			req.Header.Set(key, value)
+		}
 	}
 	return req, nil
 }
 
 func (p *HeaderInjectorPlugin) OnResponse(resp *http.Response, ctx *plugin.Context) *http.Response {
+	if resp == nil || resp.Header == nil {
+		return resp
+	}
+
 	// Inject custom headers into response
 	for key, value := range p.ResponseHeaders {
-		resp.Header.Set(key, value)
+		if key != "" && value != "" {
+			resp.Header.Set(key, value)
+		}
 	}
 	return resp
 }
