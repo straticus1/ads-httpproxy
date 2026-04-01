@@ -1,0 +1,85 @@
+# Plugin System Configuration Examples
+
+addr: ":8080"
+api_addr: ":9090"
+
+# Example 1: Load plugins from directory (auto-load all .so files)
+plugins:
+  enabled: true
+  plugin_dir: "/etc/ads-httpproxy/plugins"
+  auto_load: true
+
+---
+
+# Example 2: Load specific plugin files
+plugins:
+  enabled: true
+  plugin_list:
+    - "/usr/local/lib/ads-httpproxy/header_injector.so"
+    - "/usr/local/lib/ads-httpproxy/url_filter.so"
+    - "/usr/local/lib/ads-httpproxy/rate_limiter.so"
+  auto_load: false
+
+---
+
+# Example 3: Mixed approach (specific files + auto-load directory)
+plugins:
+  enabled: true
+  plugin_dir: "/etc/ads-httpproxy/plugins"
+  plugin_list:
+    - "/opt/custom-plugins/special_plugin.so"
+  auto_load: true
+
+---
+
+# Example 4: Plugins disabled
+plugins:
+  enabled: false
+
+---
+
+# Complete configuration with plugins
+addr: ":8080"
+api_addr: ":9090"
+bandwidth_limit: 10485760  # 10 MB/s
+
+# Authentication
+auth:
+  mechanism: "ldap"
+  ldap:
+    url: "ldaps://ldap.example.com:636"
+    base_dn: "dc=example,dc=com"
+    bind_dn: "cn=proxy,dc=example,dc=com"
+    bind_password: "password"
+
+# URL Reputation Feeds
+reputation:
+  enabled: true
+  feeds:
+    enabled: true
+    update_interval: 15
+    enable_urlhaus: true
+    enable_phishtank: true
+
+# PAC File Generation
+pac:
+  bypass_domains:
+    - "localhost"
+    - "*.example.com"
+
+# Plugin System
+plugins:
+  enabled: true
+  plugin_dir: "/etc/ads-httpproxy/plugins"
+  plugin_list:
+    # Custom plugins
+    - "/opt/custom-plugins/security_scanner.so"
+    - "/opt/custom-plugins/compliance_checker.so"
+  auto_load: true  # Also load all plugins from plugin_dir
+
+# Notes:
+# 1. Plugins are executed AFTER all built-in middleware (threat intel, auth, WAF, etc.)
+# 2. Request plugins can modify requests or block them
+# 3. Response plugins can modify responses
+# 4. Plugins are executed in registration order
+# 5. Plugin .so files must be built with: go build -buildmode=plugin

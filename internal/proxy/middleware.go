@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"sync" // Added sync for Pool
 
+	"ads-httpproxy/internal/plugin"
 	"ads-httpproxy/internal/policy"
 	"ads-httpproxy/internal/visibility" // Import visibility
 	"ads-httpproxy/pkg/logging"
@@ -335,4 +336,49 @@ func (s *Server) middlewareRespICAP(resp *http.Response, ctx *goproxy.ProxyCtx) 
 		return resp
 	}
 	return modifiedResp
+}
+
+// middlewarePlugins runs all registered plugins on the request
+func (s *Server) middlewarePlugins(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
+	if s.pm == nil {
+		return req, nil
+	}
+
+	// Create plugin context from proxy context
+	pluginCtx := &plugin.Context{
+		// Can add fields like Session ID, User Info, etc.
+	}
+
+	// Execute all plugins
+	modReq, resp := s.pm.HandleRequest(req, pluginCtx)
+	if resp != nil {
+		// Plugin decided to block/intercept
+		return nil, resp
+	}
+
+	if modReq != nil {
+		return modReq, nil
+	}
+
+	return req, nil
+}
+
+// middlewareRespPlugins runs all registered plugins on the response
+func (s *Server) middlewareRespPlugins(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
+	if s.pm == nil {
+		return resp
+	}
+
+	// Create plugin context
+	pluginCtx := &plugin.Context{
+		// Can add fields like Session ID, User Info, etc.
+	}
+
+	// Execute all plugins
+	modResp := s.pm.HandleResponse(resp, pluginCtx)
+	if modResp != nil {
+		return modResp
+	}
+
+	return resp
 }

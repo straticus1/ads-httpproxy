@@ -97,6 +97,27 @@ func NewServer(cfg *config.Config) *Server {
 
 	pm := plugin.NewManager()
 
+	// Load plugins if configured
+	if cfg.Plugins != nil && cfg.Plugins.Enabled {
+		loader := plugin.NewLoader(pm)
+
+		// Load specific plugins from list
+		if len(cfg.Plugins.PluginList) > 0 {
+			for _, pluginFile := range cfg.Plugins.PluginList {
+				if err := loader.LoadFromFile(pluginFile); err != nil {
+					logging.Logger.Error("Failed to load plugin", zap.String("file", pluginFile), zap.Error(err))
+				}
+			}
+		}
+
+		// Auto-load from directory
+		if cfg.Plugins.AutoLoad && cfg.Plugins.PluginDir != "" {
+			if err := loader.LoadFromDirectory(cfg.Plugins.PluginDir); err != nil {
+				logging.Logger.Error("Failed to load plugins from directory", zap.String("dir", cfg.Plugins.PluginDir), zap.Error(err))
+			}
+		}
+	}
+
 	// Configure Bandwidth Limiter
 	var l bandwidth.Limiter // Interface type
 	if cfg.BandwidthLimit > 0 {
@@ -471,6 +492,9 @@ func NewServer(cfg *config.Config) *Server {
 		})
 	}
 
+	// 10. Plugin System (Request) - Last before upstream
+	s.middleware = append(s.middleware, s.middlewarePlugins)
+
 	// Build Response Middleware Chain
 	s.respMiddleware = []ResponseMiddleware{}
 
@@ -483,6 +507,9 @@ func NewServer(cfg *config.Config) *Server {
 	if s.icapClient != nil {
 		s.respMiddleware = append(s.respMiddleware, s.middlewareRespICAP)
 	}
+
+	// 3. Plugin System (Response) - Last before client
+	s.respMiddleware = append(s.respMiddleware, s.middlewareRespPlugins)
 
 	// Hook Processor
 	p.OnRequest().DoFunc(func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {

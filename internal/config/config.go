@@ -52,6 +52,7 @@ type Config struct {
 	UpstreamGroups  map[string]*UpstreamGroup `json:"upstream_groups" yaml:"upstream_groups"`
 	Chains          map[string]*ProxyChain    `json:"chains" yaml:"chains"`
 	PAC             *PACConfig                `json:"pac" yaml:"pac"`
+	Plugins         *PluginConfig             `json:"plugins" yaml:"plugins"` // Plugin system configuration
 }
 
 type UpstreamGroup struct {
@@ -69,7 +70,14 @@ type PACConfig struct {
 	BypassNetworks []string `json:"bypass_networks" yaml:"bypass_networks"`
 }
 
-type ReputationConfig struct {
+type PluginConfig struct {
+	Enabled    bool     `json:"enabled" yaml:"enabled"`           // Enable plugin system
+	PluginDir  string   `json:"plugin_dir" yaml:"plugin_dir"`     // Directory containing .so plugin files
+	PluginList []string `json:"plugin_list" yaml:"plugin_list"`   // List of specific plugin files to load
+	AutoLoad   bool     `json:"auto_load" yaml:"auto_load"`       // Auto-load all plugins from plugin_dir
+}
+
+type ReputationConfig struct{
 	Enabled    bool     `json:"enabled" yaml:"enabled"`
 	URL        string   `json:"url" yaml:"url"`         // http://localhost:8080 (Legacy reputation service)
 	Timeout    int      `json:"timeout" yaml:"timeout"` // Milliseconds
