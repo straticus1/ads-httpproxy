@@ -53,7 +53,7 @@ func (s *Server) StartHotReloadWatcher(scriptPath string) {
 func (s *Server) reloadScript(path string) {
 	var err error
 	if strings.HasSuffix(path, ".star") {
-		s.scriptEngine, err = starlark.NewEngine(path)
+		s.scriptEngine, err = starlark.NewEngine(path, s.threatMgr)
 	} else {
 		s.scriptEngine, err = tengo.NewEngine(path)
 	}

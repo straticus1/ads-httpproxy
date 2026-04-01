@@ -88,6 +88,8 @@ func NewAuthenticator(cfg *config.AuthConfig, logger *zap.Logger) (Authenticator
 		return NewKerberosAuthenticator(cfg, logger)
 	case "oidc":
 		return NewOIDCAuthenticator(cfg.OIDC, logger)
+	case "oauth2":
+		return NewOAuth2Authenticator(cfg.OAuth2, logger)
 	case "saml":
 		return NewSAMLAuthenticator(cfg.SAML, logger)
 	default:

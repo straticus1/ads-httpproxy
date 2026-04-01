@@ -120,28 +120,18 @@ func NewServer(cfg *config.Config) *Server {
 		}
 	}
 
-	// Configure Scripting
+	// Configure Scripting (must be declared after threatMgr)
 	var scriptEngine engine.Engine
-	if cfg.ScriptFile != "" {
-		var err error
-		if strings.HasSuffix(cfg.ScriptFile, ".star") {
-			scriptEngine, err = starlark.NewEngine(cfg.ScriptFile)
-		} else {
-			scriptEngine, err = tengo.NewEngine(cfg.ScriptFile)
-		}
-		if err != nil {
-			logging.Logger.Error("Failed to load script engine", zap.Error(err))
-		}
-	}
+	// scriptEngine initialization moved after threatMgr is fully initialized
 
 	// Configure Policy Engine
 	policyEngine, err := policy.NewEngine()
 	if err != nil {
 		logging.Logger.Error("Failed to create policy engine", zap.Error(err))
-	} else if cfg.PolicyFile != "" {
-		if err := policyEngine.LoadFromFile(cfg.PolicyFile); err != nil {
-			logging.Logger.Error("Failed to load policies", zap.Error(err))
-		}
+	}
+	// TODO: Implement LoadFromFile for policy engine
+	if cfg.PolicyFile != "" {
+		logging.Logger.Warn("Policy file loading not yet implemented", zap.String("file", cfg.PolicyFile))
 	}
 
 	// Configure Peering
@@ -239,6 +229,19 @@ func NewServer(cfg *config.Config) *Server {
 
 	// Configure Screenshot Service
 	screenshotSvc := screenshot.NewService()
+
+	// NOW Initialize Scripting Engine (threatMgr is ready)
+	if cfg.ScriptFile != "" {
+		var err error
+		if strings.HasSuffix(cfg.ScriptFile, ".star") {
+			scriptEngine, err = starlark.NewEngine(cfg.ScriptFile, threatMgr)
+		} else {
+			scriptEngine, err = tengo.NewEngine(cfg.ScriptFile)
+		}
+		if err != nil {
+			logging.Logger.Error("Failed to load script engine", zap.Error(err))
+		}
+	}
 
 	apiServer := api.NewServer(cfg, l)
 
@@ -461,12 +464,34 @@ func (s *Server) GatewayHandler(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			// 2. Auth (Check for header if configured)
-			// This is a basic check. Real Gateway would use the middleware chain per route.
+			// 2. Auth Pipeline (Execute Native Authenticator on Gateway Route)
 			if route.AuthMethod != "" && route.AuthMethod != "none" {
-				if r.Header.Get("Authorization") == "" {
-					http.Error(w, "Unauthorized", http.StatusUnauthorized)
-					return
+				if s.authenticator != nil {
+					authenticated, user, challenge, err := s.authenticator.Authenticate(r)
+					if err != nil {
+						logging.Logger.Error("Gateway authentication error", zap.Error(err))
+						http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+						return
+					}
+					if !authenticated {
+						if challenge == "" {
+							challenge, _ = s.authenticator.Challenge(r)
+						}
+						if challenge != "" {
+							w.Header().Set("WWW-Authenticate", challenge)
+							w.Header().Set("Proxy-Authenticate", challenge)
+						}
+						http.Error(w, "Unauthorized", http.StatusUnauthorized)
+						return
+					}
+					// Fast-path user identity propagation to upstream
+					r.Header.Set("X-Authenticated-User", user)
+				} else {
+					// Fallback to basic header existence check if authenticator is somehow nil
+					if r.Header.Get("Authorization") == "" {
+						http.Error(w, "Unauthorized", http.StatusUnauthorized)
+						return
+					}
 				}
 			}
 

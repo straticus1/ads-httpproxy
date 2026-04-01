@@ -13,15 +13,20 @@ import (
 	"go.uber.org/zap"
 )
 
+type ThreatChecker interface {
+	CheckURLViaCache(ctx context.Context, url string) (bool, int, string, error)
+}
+
 type StarlarkEngine struct {
 	scriptPath string
+	threatMgr  ThreatChecker
 	mu         sync.RWMutex
 	program    *starlark.Program
 	globals    starlark.StringDict
 }
 
-func NewEngine(scriptPath string) (*StarlarkEngine, error) {
-	e := &StarlarkEngine{scriptPath: scriptPath}
+func NewEngine(scriptPath string, threatMgr ThreatChecker) (*StarlarkEngine, error) {
+	e := &StarlarkEngine{scriptPath: scriptPath, threatMgr: threatMgr}
 	if err := e.Reload(); err != nil {
 		return nil, err
 	}
@@ -38,7 +43,20 @@ func (e *StarlarkEngine) Reload() error {
 
 	// Load the script
 	thread := &starlark.Thread{Name: "main"}
-	globals, err := starlark.ExecFile(thread, e.scriptPath, nil, nil)
+	
+	// Create threat module
+	threatModule := &starlarkstruct.Module{
+		Name: "threat",
+		Members: starlark.StringDict{
+			"check_url": starlark.NewBuiltin("check_url", e.starlarkCheckUrl),
+		},
+	}
+	
+	predeclared := starlark.StringDict{
+		"threat": threatModule,
+	}
+
+	globals, err := starlark.ExecFile(thread, e.scriptPath, predeclared, nil)
 	if err != nil {
 		return fmt.Errorf("starlark exec error: %w", err)
 	}
@@ -103,6 +121,30 @@ func (e *StarlarkEngine) OnRequest(ctx context.Context, req *http.Request) error
 	}
 
 	return nil
+}
+
+func (e *StarlarkEngine) starlarkCheckUrl(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var urlStr string
+	if err := starlark.UnpackArgs(b.Name(), args, kwargs, "url", &urlStr); err != nil {
+		return nil, err
+	}
+
+	if e.threatMgr == nil {
+		return starlark.MakeInt(0), nil
+	}
+
+	// Starlark doesn't easily thread native Go contexts, so we use a background standard
+	ctx := context.Background() 
+	blocked, score, cat, err := e.threatMgr.CheckURLViaCache(ctx, urlStr)
+	if err != nil {
+		logging.Logger.Warn("Starlark CheckURL failed", zap.Error(err))
+		return starlark.MakeInt(0), nil
+	}
+	
+	_ = blocked // Could expose this as a struct, but returning score is more dynamic
+	_ = cat
+
+	return starlark.MakeInt(score), nil
 }
 
 func (e *StarlarkEngine) OnResponse(ctx context.Context, resp *http.Response) error {

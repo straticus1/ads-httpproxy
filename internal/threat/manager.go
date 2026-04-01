@@ -264,3 +264,26 @@ func (m *Manager) CheckDomainViaCache(ctx context.Context, domain string) (bool,
 
 	return false, int(entry.ThreatScore), nil
 }
+
+// CheckURLViaCache evaluates the entire URL logic via the upstream intelligence
+func (m *Manager) CheckURLViaCache(ctx context.Context, url string) (bool, int, string, error) {
+	m.mu.RLock()
+	client := m.dnsClient
+	m.mu.RUnlock()
+
+	if client == nil {
+		return false, 0, "", nil
+	}
+
+	resp, err := client.CheckURL(ctx, url)
+	if err != nil {
+		logging.Logger.Warn("Failed to check URL threat cache", zap.String("url", url), zap.Error(err))
+		return false, 0, "", err
+	}
+
+	if resp == nil {
+		return false, 0, "", nil
+	}
+
+	return resp.Blocked, int(resp.ThreatScore), resp.Category, nil
+}

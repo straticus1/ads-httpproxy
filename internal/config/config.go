@@ -51,6 +51,7 @@ type Config struct {
 	PolicyFile      string                    `json:"policy_file" yaml:"policy_file"` // Path to CEL policy file
 	UpstreamGroups  map[string]*UpstreamGroup `json:"upstream_groups" yaml:"upstream_groups"`
 	Chains          map[string]*ProxyChain    `json:"chains" yaml:"chains"`
+	PAC             *PACConfig                `json:"pac" yaml:"pac"`
 }
 
 type UpstreamGroup struct {
@@ -61,6 +62,11 @@ type UpstreamGroup struct {
 
 type ProxyChain struct {
 	Proxies []string `json:"proxies" yaml:"proxies"` // List of proxy URLs (socks5://..., http://...)
+}
+
+type PACConfig struct {
+	BypassDomains  []string `json:"bypass_domains" yaml:"bypass_domains"`
+	BypassNetworks []string `json:"bypass_networks" yaml:"bypass_networks"`
 }
 
 type ReputationConfig struct {
@@ -116,6 +122,7 @@ type AuthConfig struct {
 	Service    string            `json:"service" yaml:"service"`         // Service Principal Name (HTTP/fqdn)
 	Users      map[string]string `json:"users" yaml:"users"`             // Local users for NTLM/Basic auth (username:password)
 	OIDC       *OIDCConfig       `json:"oidc" yaml:"oidc"`
+	OAuth2     *OAuth2Config     `json:"oauth2" yaml:"oauth2"`
 	SAML       *SAMLConfig       `json:"saml" yaml:"saml"`
 }
 
@@ -125,6 +132,12 @@ type OIDCConfig struct {
 	ClientSecret string   `json:"client_secret" yaml:"client_secret"`
 	RedirectURL  string   `json:"redirect_url" yaml:"redirect_url"`
 	Scopes       []string `json:"scopes" yaml:"scopes"`
+}
+
+type OAuth2Config struct {
+	IntrospectionURL string `json:"introspection_url" yaml:"introspection_url"`
+	ClientID         string `json:"client_id" yaml:"client_id"`
+	ClientSecret     string `json:"client_secret" yaml:"client_secret"`
 }
 
 type SAMLConfig struct {
@@ -441,6 +454,10 @@ func (c *Config) Validate() error {
 		case "oidc":
 			if c.Auth.OIDC == nil || c.Auth.OIDC.Issuer == "" || c.Auth.OIDC.ClientID == "" {
 				return errors.New("oidc auth requires issuer and client_id")
+			}
+		case "oauth2":
+			if c.Auth.OAuth2 == nil || c.Auth.OAuth2.IntrospectionURL == "" {
+				return errors.New("oauth2 auth requires introspection_url")
 			}
 		case "saml":
 			if c.Auth.SAML == nil || c.Auth.SAML.MetadataURL == "" || c.Auth.SAML.RootURL == "" {

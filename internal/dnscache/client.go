@@ -60,6 +60,20 @@ func (c *Client) CheckThreat(ctx context.Context, domain string) (*pb.CacheEntry
 	return nil, nil // Not found (or no threat data yet)
 }
 
+// CheckURL performs a lookup for URL-specific threat intelligence
+func (c *Client) CheckURL(ctx context.Context, u string) (*pb.CheckURLResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancel()
+
+	resp, err := c.client.CheckURL(ctx, &pb.CheckURLRequest{
+		Url: u,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
 // Watch subscribes to the threat intelligence stream
 func (c *Client) Watch(ctx context.Context) (<-chan *pb.CacheEvent, error) {
 	stream, err := c.client.WatchCache(ctx, &pb.WatchCacheRequest{})
