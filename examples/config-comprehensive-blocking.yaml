@@ -1,0 +1,272 @@
+# Comprehensive Blocking Configuration
+# Enterprise-grade protection with malware, phishing, adult content, gambling,
+# piracy, cryptomining, and social media blocking
+
+addr: ":8080"
+api_addr: ":9090"
+
+ca_cert: "certs/ca.crt"
+ca_key: "certs/ca.key"
+
+# DNS-based threat intelligence
+dns_science:
+  enabled: true
+  rpc_addr: "localhost:50051"
+  feed_url: "https://feed.dnsscience.com/v1/threats"
+  refresh_interval: "15m"
+
+# URL Reputation System - Comprehensive Configuration
+reputation:
+  enabled: true
+
+  # External reputation API (optional)
+  url: "http://localhost:8080"
+  timeout: 5000
+  fail_open: true
+
+  # URL Reputation Feeds
+  feeds:
+    enabled: true
+    update_interval: 15  # Minutes between updates
+    max_age: 30         # Days to keep entries
+
+    # ============================================================
+    # SECURITY FEEDS (Critical - Malware & Phishing)
+    # ============================================================
+
+    # Default security feeds (built-in)
+    enable_urlhaus: true      # abuse.ch malware URLs
+    enable_phishtank: true    # PhishTank phishing
+    enable_openphish: true    # OpenPhish community
+    enable_threatfox: true    # abuse.ch IOCs
+
+    # Additional security feeds
+    custom_feeds:
+      # Malware Domain List
+      - name: "Malware-Domains"
+        url: "http://mirror1.malwaredomains.com/files/justdomains"
+        type: "plaintext"
+        category: "malware"
+
+      # Ransomware Tracker (abuse.ch)
+      - name: "Ransomware-Tracker"
+        url: "https://ransomwaretracker.abuse.ch/downloads/RW_URLBL.txt"
+        type: "plaintext"
+        category: "malware"
+
+      # ZeuS Tracker (abuse.ch)
+      - name: "ZeuS-Tracker"
+        url: "https://zeustracker.abuse.ch/blocklist.php?download=domainblocklist"
+        type: "plaintext"
+        category: "malware"
+
+      # Feodo Tracker - Botnet C&C (abuse.ch)
+      - name: "Feodo-Tracker"
+        url: "https://feodotracker.abuse.ch/downloads/ipblocklist.txt"
+        type: "plaintext"
+        category: "malware"
+
+      # SSL Blacklist (abuse.ch)
+      - name: "SSL-Blacklist"
+        url: "https://sslbl.abuse.ch/blacklist/sslblacklist.csv"
+        type: "csv"
+        category: "malware"
+
+      # BlockList Project - Malware
+      - name: "BlockList-Malware"
+        url: "https://raw.githubusercontent.com/blocklistproject/Lists/master/malware.txt"
+        type: "plaintext"
+        category: "malware"
+
+      # BlockList Project - Phishing
+      - name: "BlockList-Phishing"
+        url: "https://raw.githubusercontent.com/blocklistproject/Lists/master/phishing.txt"
+        type: "plaintext"
+        category: "phishing"
+
+      # Scam/Fraud Sites
+      - name: "BlockList-Scam"
+        url: "https://raw.githubusercontent.com/blocklistproject/Lists/master/scam.txt"
+        type: "plaintext"
+        category: "scam"
+
+      # Compromised/Hacked Sites
+      - name: "Hacked-Sites"
+        url: "https://raw.githubusercontent.com/mitchellkrogza/The-Big-List-of-Hacked-Malware-Web-Sites/master/hacked-domains.list"
+        type: "plaintext"
+        category: "malware"
+
+      # ============================================================
+      # ADULT CONTENT BLOCKING
+      # ============================================================
+
+      - name: "BlockList-Porn"
+        url: "https://raw.githubusercontent.com/blocklistproject/Lists/master/porn.txt"
+        type: "plaintext"
+        category: "adult"
+
+      - name: "Adult-Sites-Extended"
+        url: "https://raw.githubusercontent.com/chadmayfield/my-pihole-blocklists/master/lists/pi_blocklist_porn_all.list"
+        type: "plaintext"
+        category: "adult"
+
+      # ============================================================
+      # GAMBLING BLOCKING
+      # ============================================================
+
+      - name: "BlockList-Gambling"
+        url: "https://raw.githubusercontent.com/blocklistproject/Lists/master/gambling.txt"
+        type: "plaintext"
+        category: "gambling"
+
+      # ============================================================
+      # PIRACY & COPYRIGHT INFRINGEMENT
+      # ============================================================
+
+      - name: "BlockList-Piracy"
+        url: "https://raw.githubusercontent.com/blocklistproject/Lists/master/piracy.txt"
+        type: "plaintext"
+        category: "piracy"
+
+      - name: "BlockList-Torrent"
+        url: "https://raw.githubusercontent.com/blocklistproject/Lists/master/torrent.txt"
+        type: "plaintext"
+        category: "piracy"
+
+      # ============================================================
+      # CRYPTOMINING (Unauthorized Mining Scripts)
+      # ============================================================
+
+      - name: "NoCoin"
+        url: "https://raw.githubusercontent.com/hoshsadiq/adblock-nocoin-list/master/hosts.txt"
+        type: "plaintext"
+        category: "cryptomining"
+
+      - name: "CoinBlocker"
+        url: "https://gitlab.com/ZeroDot1/CoinBlockerLists/raw/master/list.txt"
+        type: "plaintext"
+        category: "cryptomining"
+
+      # ============================================================
+      # SOCIAL MEDIA (Productivity/Time-wasting)
+      # ============================================================
+
+      # Uncomment if you want to block social media
+
+      # - name: "BlockList-Facebook"
+      #   url: "https://raw.githubusercontent.com/blocklistproject/Lists/master/facebook.txt"
+      #   type: "plaintext"
+      #   category: "social_media"
+
+      # - name: "BlockList-TikTok"
+      #   url: "https://raw.githubusercontent.com/blocklistproject/Lists/master/tiktok.txt"
+      #   type: "plaintext"
+      #   category: "social_media"
+
+      # - name: "BlockList-Twitter"
+      #   url: "https://raw.githubusercontent.com/blocklistproject/Lists/master/twitter.txt"
+      #   type: "plaintext"
+      #   category: "social_media"
+
+      # - name: "BlockList-YouTube"
+      #   url: "https://raw.githubusercontent.com/blocklistproject/Lists/master/youtube.txt"
+      #   type: "plaintext"
+      #   category: "social_media"
+
+      # ============================================================
+      # ADS & TRACKERS (Privacy/Performance)
+      # ============================================================
+
+      # Uncomment if you want ad/tracker blocking
+
+      # - name: "Peter-Lowe-AdServers"
+      #   url: "https://pgl.yoyo.org/adservers/serverlist.php?hostformat=hosts&showintro=0"
+      #   type: "plaintext"
+      #   category: "ads"
+
+      # - name: "BlockList-Ads"
+      #   url: "https://raw.githubusercontent.com/blocklistproject/Lists/master/ads.txt"
+      #   type: "plaintext"
+      #   category: "ads"
+
+      # - name: "BlockList-Tracking"
+      #   url: "https://raw.githubusercontent.com/blocklistproject/Lists/master/tracking.txt"
+      #   type: "plaintext"
+      #   category: "tracking"
+
+      # ============================================================
+      # ABUSE/SPAM SOURCES
+      # ============================================================
+
+      - name: "BlockList-Abuse"
+        url: "https://raw.githubusercontent.com/blocklistproject/Lists/master/abuse.txt"
+        type: "plaintext"
+        category: "abuse"
+
+      - name: "Blocklist-DE"
+        url: "https://lists.blocklist.de/lists/all.txt"
+        type: "plaintext"
+        category: "abuse"
+
+      # ============================================================
+      # EMERGING THREATS
+      # ============================================================
+
+      - name: "Bambenek-C2-Domains"
+        url: "http://osint.bambenekconsulting.com/feeds/c2-dommasterlist.txt"
+        type: "plaintext"
+        category: "malware"
+
+      # ============================================================
+      # CUSTOM/INTERNAL FEEDS
+      # ============================================================
+
+      # Add your organization's internal blocklists here
+      # - name: "Corporate-Blocklist"
+      #   url: "https://internal.company.com/blocked-urls.txt"
+      #   type: "plaintext"
+      #   category: "malware"
+
+# IP-based threat intelligence (legacy)
+threat_sources:
+  - "https://rules.emergingthreats.net/blockrules/compromised-ips.txt"
+  - "https://www.spamhaus.org/drop/drop.txt"
+
+# DLP - Data Loss Prevention
+dlp_patterns:
+  - "\\d{3}-\\d{2}-\\d{4}"  # SSN
+  - "\\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}\\b"  # Email
+  - "\\b(?:\\d{4}[- ]?){3}\\d{4}\\b"  # Credit card
+  - "\\b[A-Z]{2}\\d{6,7}\\b"  # Passport
+
+# ThreatScript for advanced logic
+script_file: "scripts/combined_security.star"
+
+# ICAP Virus Scanning
+icap_url: "icap://localhost:1344/clamav"
+
+# Authentication
+auth:
+  mechanism: "basic"
+  users:
+    admin: "changeme"
+
+# GeoIP Blocking
+geoip_db_file: "/usr/share/GeoIP/GeoLite2-Country.mmdb"
+geoip_block:
+  - "CN"  # China
+  - "RU"  # Russia
+  - "KP"  # North Korea
+  - "IR"  # Iran
+
+# Bandwidth limiting
+bandwidth_limit: 10485760  # 10 MB/s per client
+
+# Performance optimizations
+enable_reuseport: true
+enable_quic: false
+
+# Monitoring
+prometheus:
+  enabled: true
+  addr: ":9092"
