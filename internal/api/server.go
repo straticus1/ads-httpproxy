@@ -37,8 +37,9 @@ func (s *Server) Start() {
 	mux.HandleFunc("/healthz", s.handleHealth)
 	mux.Handle("/metrics", promhttp.Handler())
 
-	pacHandler := pac.NewHandler(s.cfg.Addr, s.cfg.PAC)
+	pacHandler := pac.NewHandler(s.cfg.Addr)
 	mux.Handle("/proxy.pac", pacHandler)
+	mux.Handle("/api/pac/policy", http.HandlerFunc(pacHandler.HandleAPI))
 
 	logging.Logger.Info("Starting Admin API", zap.String("addr", s.cfg.ApiAddr))
 	go func() {
