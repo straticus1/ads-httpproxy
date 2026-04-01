@@ -30,8 +30,8 @@ services:
       clamav:
         condition: service_healthy
     volumes:
-      - ./config/c-icap.conf:/etc/c-icap/c-icap.conf:ro
-      - ./config/clamav_mod.conf:/etc/c-icap/clamav_mod.conf:ro
+      - ./c-icap.conf:/etc/c-icap/c-icap.conf:ro
+      - ./clamav_mod.conf:/etc/c-icap/clamav_mod.conf:ro
       - icap-logs:/var/log/c-icap
     environment:
       - ICAP_PORT=1344
@@ -47,7 +47,7 @@ services:
 
   ads-httpproxy:
     build:
-      context: .
+      context: ..
       dockerfile: Dockerfile
     container_name: ads-httpproxy
     restart: unless-stopped
@@ -59,9 +59,9 @@ services:
       c-icap:
         condition: service_healthy
     volumes:
-      - ./config/config-icap.yaml:/app/config.yaml:ro
+      - ./config-icap.yaml:/app/config.yaml:ro
       - proxy-logs:/var/log/ads-httpproxy
-      - ./examples/threatscripts:/app/scripts:ro
+      - ../examples/threatscripts:/app/scripts:ro
     environment:
       - CONFIG_FILE=/app/config.yaml
       - ICAP_URL=icap://c-icap:1344/clamav

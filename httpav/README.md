@@ -42,13 +42,13 @@ Complete Docker Compose setup for ads-httpproxy with ClamAV antivirus scanning v
 ### 1. Start the stack
 
 ```bash
-docker-compose -f docker-compose.icap.yaml up -d
+cd httpav && docker-compose up -d
 ```
 
 ### 2. Wait for ClamAV to update signatures (2-3 minutes)
 
 ```bash
-docker-compose -f docker-compose.icap.yaml logs -f clamav
+cd httpav && docker-compose logs -f clamav
 ```
 
 Wait for: `ClamAV update process started` and `Database updated`
@@ -56,7 +56,7 @@ Wait for: `ClamAV update process started` and `Database updated`
 ### 3. Verify services are healthy
 
 ```bash
-docker-compose -f docker-compose.icap.yaml ps
+cd httpav && docker-compose ps
 ```
 
 All services should show `healthy`.
@@ -136,13 +136,13 @@ ads-httpproxy configuration:
 
 ```bash
 # ads-httpproxy logs
-docker-compose -f docker-compose.icap.yaml logs -f ads-httpproxy
+cd httpav && docker-compose logs -f ads-httpproxy
 
 # ClamAV logs
-docker-compose -f docker-compose.icap.yaml logs -f clamav
+cd httpav && docker-compose logs -f clamav
 
 # c-icap logs
-docker-compose -f docker-compose.icap.yaml logs -f c-icap
+cd httpav && docker-compose logs -f c-icap
 ```
 
 ### Metrics
@@ -191,7 +191,7 @@ Expected: Upload blocked, virus logged
 ### Test 4: Check virus detection logs
 
 ```bash
-docker-compose -f docker-compose.icap.yaml exec c-icap cat /var/log/c-icap/access.log
+cd httpav && docker-compose exec c-icap cat /var/log/c-icap/access.log
 ```
 
 Look for: `INFECTED` or virus names
@@ -202,10 +202,10 @@ Look for: `INFECTED` or virus names
 
 ```bash
 # Add custom signatures
-docker-compose -f docker-compose.icap.yaml exec clamav sh -c 'echo "signature-data" > /var/lib/clamav/custom.ndb'
+cd httpav && docker-compose exec clamav sh -c 'echo "signature-data" > /var/lib/clamav/custom.ndb'
 
 # Reload ClamAV
-docker-compose -f docker-compose.icap.yaml exec clamav clamdscan --reload
+cd httpav && docker-compose exec clamav clamdscan --reload
 ```
 
 ### Adjust scan limits
@@ -223,7 +223,7 @@ clamav_mod.MaxRecLevel 10
 Restart services:
 
 ```bash
-docker-compose -f docker-compose.icap.yaml restart c-icap
+cd httpav && docker-compose restart c-icap
 ```
 
 ### Enable ThreatScript + ICAP
@@ -247,7 +247,7 @@ This combines:
 
 ```bash
 # Check ClamAV logs
-docker-compose -f docker-compose.icap.yaml logs clamav
+cd httpav && docker-compose logs clamav
 
 # Common issue: signature update in progress
 # Wait 2-3 minutes for freshclam to complete
@@ -257,10 +257,10 @@ docker-compose -f docker-compose.icap.yaml logs clamav
 
 ```bash
 # Verify c-icap is running
-docker-compose -f docker-compose.icap.yaml ps c-icap
+cd httpav && docker-compose ps c-icap
 
 # Check c-icap can reach ClamAV
-docker-compose -f docker-compose.icap.yaml exec c-icap nc -zv clamav 3310
+cd httpav && docker-compose exec c-icap nc -zv clamav 3310
 ```
 
 ### Proxy blocking legitimate files
@@ -340,7 +340,7 @@ auth:
 ### 5. Scale c-icap
 
 ```bash
-docker-compose -f docker-compose.icap.yaml up -d --scale c-icap=3
+cd httpav && docker-compose up -d --scale c-icap=3
 ```
 
 ## Integration with dnsscienced
@@ -371,10 +371,10 @@ This provides:
 ## Stopping the stack
 
 ```bash
-docker-compose -f docker-compose.icap.yaml down
+cd httpav && docker-compose down
 
 # Remove volumes (all data)
-docker-compose -f docker-compose.icap.yaml down -v
+cd httpav && docker-compose down -v
 ```
 
 ## Performance Benchmarks
