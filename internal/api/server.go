@@ -16,8 +16,9 @@ import (
 
 // Server represents the Admin API server.
 type Server struct {
-	cfg     *config.Config
-	limiter bandwidth.Limiter
+	cfg          *config.Config
+	limiter      bandwidth.Limiter
+	cacheHandler *CacheHandler
 }
 
 // NewServer creates a new Admin API server.
@@ -28,6 +29,11 @@ func NewServer(cfg *config.Config, limiter bandwidth.Limiter) *Server {
 	}
 }
 
+// SetCacheHandler sets the cache handler (called after Server creation)
+func (s *Server) SetCacheHandler(handler *CacheHandler) {
+	s.cacheHandler = handler
+}
+
 // Start runs the API server in a background goroutine.
 func (s *Server) Start() {
 	mux := http.NewServeMux()
@@ -36,6 +42,16 @@ func (s *Server) Start() {
 	mux.HandleFunc("/config", s.authMiddleware(s.handleConfig))
 	mux.HandleFunc("/healthz", s.handleHealth)
 	mux.Handle("/metrics", promhttp.Handler())
+
+	// Cache API endpoints
+	if s.cacheHandler != nil {
+		mux.HandleFunc("/api/cache/stats", s.authMiddleware(s.cacheHandler.HandleStats))
+		mux.HandleFunc("/api/cache/purge", s.authMiddleware(s.cacheHandler.HandlePurge))
+		mux.HandleFunc("/api/cache/all", s.authMiddleware(s.cacheHandler.HandlePurgeAll))
+		mux.HandleFunc("/api/cache/health", s.cacheHandler.HandleHealth)
+		// Support PURGE method on /cache/* paths
+		mux.HandleFunc("/cache/", s.authMiddleware(s.cacheHandler.HandlePurge))
+	}
 
 	pacHandler := pac.NewHandler(s.cfg.Addr)
 	mux.Handle("/proxy.pac", pacHandler)

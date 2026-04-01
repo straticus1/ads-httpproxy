@@ -53,6 +53,7 @@ type Config struct {
 	Chains          map[string]*ProxyChain    `json:"chains" yaml:"chains"`
 	PAC             *PACConfig                `json:"pac" yaml:"pac"`
 	Plugins         *PluginConfig             `json:"plugins" yaml:"plugins"` // Plugin system configuration
+	Cache           *HTTPCacheConfig          `json:"cache" yaml:"cache"`     // HTTP response caching
 }
 
 type UpstreamGroup struct {
@@ -75,6 +76,23 @@ type PluginConfig struct {
 	PluginDir  string   `json:"plugin_dir" yaml:"plugin_dir"`     // Directory containing .so plugin files
 	PluginList []string `json:"plugin_list" yaml:"plugin_list"`   // List of specific plugin files to load
 	AutoLoad   bool     `json:"auto_load" yaml:"auto_load"`       // Auto-load all plugins from plugin_dir
+}
+
+// HTTPCacheConfig configures HTTP response caching
+type HTTPCacheConfig struct {
+	Enabled     bool              `json:"enabled" yaml:"enabled"`
+	Memory      *MemoryCacheConfig `json:"memory" yaml:"memory"`
+	DefaultTTL  int               `json:"default_ttl" yaml:"default_ttl"`     // Seconds
+	MaxTTL      int               `json:"max_ttl" yaml:"max_ttl"`             // Seconds
+	MinSizeMB   int               `json:"min_size_mb" yaml:"min_size_mb"`     // Minimum response size to cache (MB)
+	MaxSizeMB   int               `json:"max_size_mb" yaml:"max_size_mb"`     // Maximum response size to cache (MB)
+}
+
+// MemoryCacheConfig configures L1 in-memory cache
+type MemoryCacheConfig struct {
+	Enabled     bool `json:"enabled" yaml:"enabled"`
+	MaxSizeMB   int  `json:"max_size_mb" yaml:"max_size_mb"`     // Maximum memory cache size in MB
+	MaxTTL      int  `json:"max_ttl" yaml:"max_ttl"`             // Maximum TTL for memory cache (seconds)
 }
 
 type ReputationConfig struct{

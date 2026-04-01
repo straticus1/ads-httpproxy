@@ -382,3 +382,69 @@ func (s *Server) middlewareRespPlugins(resp *http.Response, ctx *goproxy.ProxyCt
 
 	return resp
 }
+
+// middlewareCache checks cache for cached responses
+func (s *Server) middlewareCache(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
+	if s.httpCache == nil {
+		return req, nil
+	}
+
+	// Check cache
+	cached, ok := s.httpCache.Get(req)
+	if !ok {
+		// Cache MISS - continue to origin
+		return req, nil
+	}
+
+	// Check conditional requests (If-None-Match, If-Modified-Since)
+	if cached.CheckConditional(req) {
+		// Return 304 Not Modified
+		resp := &http.Response{
+			StatusCode: http.StatusNotModified,
+			Header:     make(http.Header),
+			Request:    req,
+			Proto:      "HTTP/1.1",
+			ProtoMajor: 1,
+			ProtoMinor: 1,
+		}
+
+		if cached.ETag != "" {
+			resp.Header.Set("ETag", cached.ETag)
+		}
+		if cached.LastModified != "" {
+			resp.Header.Set("Last-Modified", cached.LastModified)
+		}
+
+		resp.Header.Set("X-Cache", "HIT-CONDITIONAL")
+		logging.Logger.Debug("Cache 304 Not Modified", zap.String("url", req.URL.String()))
+		return nil, resp
+	}
+
+	// Cache HIT - return cached response
+	resp := cached.ToResponse(req)
+	logging.Logger.Debug("Cache HIT", zap.String("url", req.URL.String()))
+	return nil, resp
+}
+
+// middlewareRespCache stores responses in cache
+func (s *Server) middlewareRespCache(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
+	if s.httpCache == nil || resp == nil {
+		return resp
+	}
+
+	// Store response in cache (async)
+	go func() {
+		if err := s.httpCache.Set(ctx.Req, resp); err != nil {
+			logging.Logger.Warn("Failed to cache response",
+				zap.String("url", ctx.Req.URL.String()),
+				zap.Error(err))
+		}
+	}()
+
+	// Add cache status header
+	if resp.Header.Get("X-Cache") == "" {
+		resp.Header.Set("X-Cache", "MISS")
+	}
+
+	return resp
+}

@@ -60,6 +60,7 @@ type Server struct {
 	feedManager    *reputation.FeedManager
 	authenticator  auth.Authenticator
 	cache          *cache.Manager
+	httpCache      *cache.HTTPCache
 	screenshot     *screenshot.Service
 	httpServer     *http.Server
 	middleware     []RequestMiddleware
@@ -319,6 +320,55 @@ func NewServer(cfg *config.Config) *Server {
 	// Configure Cache
 	cacheMgr := cache.NewManager(cfg.Redis)
 
+	// Configure HTTP Cache (L1 + L2 caching)
+	var httpCacheMgr *cache.HTTPCache
+	if cfg.Cache != nil && cfg.Cache.Enabled {
+		cacheConfig := &cache.CacheConfig{
+			Enabled:         cfg.Cache.Enabled,
+			MemoryEnabled:   cfg.Cache.Memory != nil && cfg.Cache.Memory.Enabled,
+			MemoryMaxSizeMB: 500,
+			MemoryMaxTTL:    60 * time.Second,
+			DefaultTTL:      3600 * time.Second,
+			MaxTTL:          86400 * time.Second,
+			MinSizeBytes:    1024,
+			MaxSizeBytes:    10 * 1024 * 1024,
+			CompressBody:    true,
+			CachePrivate:    false,
+		}
+
+		if cfg.Cache.Memory != nil {
+			if cfg.Cache.Memory.MaxSizeMB > 0 {
+				cacheConfig.MemoryMaxSizeMB = cfg.Cache.Memory.MaxSizeMB
+			}
+			if cfg.Cache.Memory.MaxTTL > 0 {
+				cacheConfig.MemoryMaxTTL = time.Duration(cfg.Cache.Memory.MaxTTL) * time.Second
+			}
+		}
+
+		if cfg.Cache.DefaultTTL > 0 {
+			cacheConfig.DefaultTTL = time.Duration(cfg.Cache.DefaultTTL) * time.Second
+		}
+		if cfg.Cache.MaxTTL > 0 {
+			cacheConfig.MaxTTL = time.Duration(cfg.Cache.MaxTTL) * time.Second
+		}
+
+		httpCacheMgr = cache.NewHTTPCache(cacheMgr, cacheConfig)
+
+		// Start memory cache cleanup if enabled
+		if httpCacheMgr != nil && cacheConfig.MemoryEnabled {
+			// Cleanup every 60 seconds
+			go func() {
+				ticker := time.NewTicker(60 * time.Second)
+				defer ticker.Stop()
+				for range ticker.C {
+					if httpCacheMgr != nil {
+						// Memory cleanup is handled internally
+					}
+				}
+			}()
+		}
+	}
+
 	// Configure Screenshot Service
 	screenshotSvc := screenshot.NewService()
 
@@ -336,6 +386,12 @@ func NewServer(cfg *config.Config) *Server {
 	}
 
 	apiServer := api.NewServer(cfg, l)
+
+	// Set cache handler if cache is enabled
+	if httpCacheMgr != nil {
+		cacheHandler := api.NewCacheHandler(httpCacheMgr)
+		apiServer.SetCacheHandler(cacheHandler)
+	}
 
 	// Configuration Upstream Manager
 	um := NewUpstreamManager(cfg)
@@ -358,6 +414,7 @@ func NewServer(cfg *config.Config) *Server {
 		feedManager:   feedMgr,
 		authenticator: authenticator,
 		cache:         cacheMgr,
+		httpCache:     httpCacheMgr,
 		screenshot:    screenshotSvc,
 		upstreamMgr:   um,
 	}
@@ -444,12 +501,17 @@ func NewServer(cfg *config.Config) *Server {
 		s.middleware = append(s.middleware, s.middlewareAuth)
 	}
 
-	// 4. Policy Engine (Needs User/Time/Geo context)
+	// 4. HTTP Cache Check (After auth, before expensive operations)
+	if s.httpCache != nil {
+		s.middleware = append(s.middleware, s.middlewareCache)
+	}
+
+	// 5. Policy Engine (Needs User/Time/Geo context)
 	if s.policyEngine != nil {
 		s.middleware = append(s.middleware, s.middlewarePolicy)
 	}
 
-	// 5. Reputation Service (Check External Reputation)
+	// 6. Reputation Service (Check External Reputation)
 	if s.reputation != nil {
 		s.middleware = append(s.middleware, s.middlewareReputation)
 	}
@@ -508,7 +570,12 @@ func NewServer(cfg *config.Config) *Server {
 		s.respMiddleware = append(s.respMiddleware, s.middlewareRespICAP)
 	}
 
-	// 3. Plugin System (Response) - Last before client
+	// 3. HTTP Cache Store (Store responses in cache)
+	if s.httpCache != nil {
+		s.respMiddleware = append(s.respMiddleware, s.middlewareRespCache)
+	}
+
+	// 4. Plugin System (Response) - Last before client
 	s.respMiddleware = append(s.respMiddleware, s.middlewareRespPlugins)
 
 	// Hook Processor

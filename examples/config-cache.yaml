@@ -1,0 +1,151 @@
+# HTTP Caching Configuration Examples
+
+addr: ":8080"
+api_addr: ":9090"
+
+# Redis Configuration (Required for L2 cache)
+redis:
+  enabled: true
+  addr: "localhost:6379"
+  password: ""
+  db: 0
+
+# ====================================================================
+# Example 1: Basic HTTP Caching (L2 Redis only)
+# ====================================================================
+cache:
+  enabled: true
+  default_ttl: 3600    # 1 hour default TTL
+  max_ttl: 86400       # 24 hours maximum TTL
+
+---
+
+# ====================================================================
+# Example 2: Two-Tier Caching (L1 Memory + L2 Redis)
+# ====================================================================
+cache:
+  enabled: true
+
+  # L1 In-Memory Cache (fast, limited size)
+  memory:
+    enabled: true
+    max_size_mb: 500   # 500MB memory cache
+    max_ttl: 60        # 60 seconds max for memory cache
+
+  # L2 Redis Cache settings
+  default_ttl: 3600    # 1 hour
+  max_ttl: 86400       # 24 hours
+  min_size_mb: 0       # Cache responses of any size
+  max_size_mb: 10      # Don't cache responses > 10MB
+
+---
+
+# ====================================================================
+# Example 3: Aggressive Caching for Static Content
+# ====================================================================
+cache:
+  enabled: true
+
+  memory:
+    enabled: true
+    max_size_mb: 1000  # 1GB memory cache
+    max_ttl: 300       # 5 minutes in memory
+
+  default_ttl: 3600    # 1 hour default
+  max_ttl: 604800      # 7 days for static assets
+
+---
+
+# ====================================================================
+# Example 4: Conservative Caching (API Responses)
+# ====================================================================
+cache:
+  enabled: true
+
+  memory:
+    enabled: true
+    max_size_mb: 100   # Small memory cache
+    max_ttl: 30        # 30 seconds
+
+  default_ttl: 300     # 5 minutes
+  max_ttl: 1800        # 30 minutes max
+
+---
+
+# ====================================================================
+# Example 5: Complete Configuration with Caching
+# ====================================================================
+addr: ":8080"
+api_addr: ":9090"
+bandwidth_limit: 10485760  # 10 MB/s
+
+# Authentication
+auth:
+  mechanism: "ldap"
+  ldap:
+    url: "ldaps://ldap.example.com:636"
+    base_dn: "dc=example,dc=com"
+    bind_dn: "cn=proxy,dc=example,dc=com"
+    bind_password: "password"
+
+# Redis (Required for caching)
+redis:
+  enabled: true
+  addr: "localhost:6379"
+  password: ""
+  db: 0
+
+# HTTP Response Caching
+cache:
+  enabled: true
+
+  # L1 Memory Cache
+  memory:
+    enabled: true
+    max_size_mb: 500
+    max_ttl: 60
+
+  # L2 Redis Cache
+  default_ttl: 3600
+  max_ttl: 86400
+  min_size_mb: 0
+  max_size_mb: 10
+
+# URL Reputation Feeds
+reputation:
+  enabled: true
+  feeds:
+    enabled: true
+    update_interval: 15
+    enable_urlhaus: true
+    enable_phishtank: true
+
+# Plugin System
+plugins:
+  enabled: true
+  plugin_dir: "/etc/ads-httpproxy/plugins"
+  auto_load: true
+
+# Notes:
+# 1. Cache respects HTTP Cache-Control headers
+# 2. Cache keys include: Method, URL, Accept-Encoding
+# 3. 304 Not Modified responses are automatically supported
+# 4. X-Cache header indicates HIT/MISS status
+# 5. Conditional requests (If-None-Match, If-Modified-Since) supported
+#
+# Cache Behavior:
+# - GET/HEAD requests only
+# - 2xx/3xx responses only
+# - No caching of Set-Cookie responses
+# - No caching of private responses (unless configured)
+# - No caching of no-store responses
+#
+# Performance:
+# - L1 (Memory): ~0.1ms latency
+# - L2 (Redis):  ~1ms latency
+# - Origin:      50-500ms latency
+#
+# Expected Hit Rate:
+# - Static assets: 90-95%
+# - API responses: 40-60%
+# - Overall:       60-80%
