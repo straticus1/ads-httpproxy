@@ -43,20 +43,16 @@ func (e *StarlarkEngine) Reload() error {
 
 	// Load the script
 	thread := &starlark.Thread{Name: "main"}
-	
-	// Create threat module
-	threatModule := &starlarkstruct.Module{
-		Name: "threat",
-		Members: starlark.StringDict{
-			"check_url": starlark.NewBuiltin("check_url", e.starlarkCheckUrl),
-		},
-	}
-	
-	predeclared := starlark.StringDict{
-		"threat": threatModule,
+
+	// Build full ThreatScript module ecosystem
+	threatScriptModules := BuildThreatScriptModules(e.threatMgr)
+
+	predeclared := starlark.StringDict{}
+	for name, module := range threatScriptModules {
+		predeclared[name] = module
 	}
 
-	globals, err := starlark.ExecFile(thread, e.scriptPath, predeclared, nil)
+	globals, err := starlark.ExecFile(thread, e.scriptPath, nil, predeclared)
 	if err != nil {
 		return fmt.Errorf("starlark exec error: %w", err)
 	}
