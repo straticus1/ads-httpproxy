@@ -11,7 +11,15 @@ import (
 )
 
 // Config needs to be loaded from json/yaml later.
+type FeatureToggles struct {
+	ForwardProxy bool `json:"forward_proxy" yaml:"forward_proxy"`
+	ReverseProxy bool `json:"reverse_proxy" yaml:"reverse_proxy"`
+	BrowserID    bool `json:"browser_id" yaml:"browser_id"`     // Activate edge BrowserID identity integration
+	MASQUE       bool `json:"masque" yaml:"masque"`             // Activate CONNECT-UDP & CONNECT-IP endpoints
+}
+
 type Config struct {
+	Features        *FeatureToggles           `json:"features" yaml:"features"`
 	Addr            string                    `json:"addr" yaml:"addr"`
 	DataCenter      string                    `json:"data_center" yaml:"data_center"` // For Cluster Sync
 	SocksAddr       string                    `json:"socks_addr" yaml:"socks_addr"`
@@ -254,6 +262,12 @@ type TenantConfig struct {
 // NewConfig returns a default configuration
 func NewConfig() *Config {
 	return &Config{
+		Features: &FeatureToggles{
+			ForwardProxy: true,
+			ReverseProxy: true,
+			BrowserID:    false,
+			MASQUE:       false,
+		},
 		Addr:       ":8080",
 		SocksAddr:  ":1080",
 		MirrorAddr: "", // Disabled by default
@@ -336,6 +350,22 @@ func Load(path string) (*Config, error) {
 
 // LoadEnv overrides configuration from environment variables
 func (c *Config) LoadEnv() error {
+	if c.Features == nil {
+		c.Features = NewConfig().Features
+	}
+	if v := os.Getenv("ADS_FEATURE_FORWARD"); v == "false" {
+		c.Features.ForwardProxy = false
+	}
+	if v := os.Getenv("ADS_FEATURE_REVERSE"); v == "false" {
+		c.Features.ReverseProxy = false
+	}
+	if v := os.Getenv("ADS_FEATURE_BROWSERID"); v == "true" {
+		c.Features.BrowserID = true
+	}
+	if v := os.Getenv("ADS_FEATURE_MASQUE"); v == "true" {
+		c.Features.MASQUE = true
+	}
+
 	if v := os.Getenv("ADS_ADDR"); v != "" {
 		c.Addr = v
 	}

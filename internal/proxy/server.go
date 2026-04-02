@@ -11,11 +11,14 @@ import (
 	"ads-httpproxy/internal/api"
 	"ads-httpproxy/internal/auth"
 	"ads-httpproxy/internal/bandwidth"
+	"ads-httpproxy/internal/browserid"
+	"ads-httpproxy/internal/ja3"
 	"ads-httpproxy/internal/cache"
 	"ads-httpproxy/internal/config"
 	"ads-httpproxy/internal/dlp"
 	"ads-httpproxy/internal/geoip"
 	"ads-httpproxy/internal/icap"
+	"ads-httpproxy/internal/masque"
 	"ads-httpproxy/internal/mitm"
 	"ads-httpproxy/internal/peering"
 	"ads-httpproxy/internal/plugin"
@@ -613,67 +616,102 @@ func NewServer(cfg *config.Config) *Server {
 
 // GatewayHandler wraps the Proxy and Reverse Proxy logic
 func (s *Server) GatewayHandler(w http.ResponseWriter, r *http.Request) {
-	// 1. Check if this is a Reverse Proxy Route
-	// 1. Check if this is a Reverse Proxy Route
-	// Optimization: Routes are pre-compiled in NewServer.
-	// We iterate (O(N)), but we skip parsing/allocation.
-	// Ideally use a Radix tree for O(K) lookup where K=path_len.
-	for _, route := range s.compiledRoutes {
-		if strings.HasPrefix(r.URL.Path, route.Path) {
-
-			// Gateway Logic: Rate Limit & Auth
-			// 1. Rate Limit (Global for route for now)
-			if s.limiter != nil {
-				if err := s.limiter.WaitN(r.Context(), 1); err != nil {
-					http.Error(w, "Rate Limit Exceeded", http.StatusTooManyRequests)
-					return
-				}
-			}
-
-			// 2. Auth Pipeline (Execute Native Authenticator on Gateway Route)
-			if route.AuthMethod != "" && route.AuthMethod != "none" {
-				if s.authenticator != nil {
-					authenticated, user, challenge, err := s.authenticator.Authenticate(r)
-					if err != nil {
-						logging.Logger.Error("Gateway authentication error", zap.Error(err))
-						http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-						return
-					}
-					if !authenticated {
-						if challenge == "" {
-							challenge, _ = s.authenticator.Challenge(r)
-						}
-						if challenge != "" {
-							w.Header().Set("WWW-Authenticate", challenge)
-							w.Header().Set("Proxy-Authenticate", challenge)
-						}
-						http.Error(w, "Unauthorized", http.StatusUnauthorized)
-						return
-					}
-					// Fast-path user identity propagation to upstream
-					r.Header.Set("X-Authenticated-User", user)
-				} else {
-					// Fallback to basic header existence check if authenticator is somehow nil
-					if r.Header.Get("Authorization") == "" {
-						http.Error(w, "Unauthorized", http.StatusUnauthorized)
-						return
-					}
-				}
-			}
-
-			logging.Logger.Info("Gateway: Proxying request",
-				zap.String("path", r.URL.Path),
-				zap.String("upstream", route.Upstream.String()))
-
-			// Update Host header
-			r.Host = route.Upstream.Host
-			route.Proxy.ServeHTTP(w, r)
+	if s.cfg.Features != nil && s.cfg.Features.MASQUE {
+		if r.Method == "CONNECT-UDP" {
+			masque.HandleUDP(w, r)
+			return
+		}
+		if r.Method == "CONNECT-IP" {
+			masque.HandleIP(w, r)
 			return
 		}
 	}
 
-	// 2. Fallback to Forward Proxy
-	s.proxy.ServeHTTP(w, r)
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		// 1. Check if this is a Reverse Proxy Route
+		// Optimization: Routes are pre-compiled in NewServer.
+		for _, route := range s.compiledRoutes {
+			if strings.HasPrefix(r.URL.Path, route.Path) {
+				
+				var clientIP string
+				if ident, ok := r.Context().Value(browserid.IdentityContextKey).(*browserid.Identity); ok && ident != nil {
+					clientIP = ident.IP
+				} else {
+					clientIP, _, _ = net.SplitHostPort(r.RemoteAddr)
+					if clientIP == "" {
+						clientIP = r.RemoteAddr
+					}
+				}
+
+				// Check Threat Intel for Reverse Proxy Client
+				if s.threatMgr != nil {
+					if blocked := s.threatMgr.IsBlocked(clientIP); blocked {
+						logging.Logger.Warn("Blocked reverse proxy access from threat IP", zap.String("ip", clientIP))
+						http.Error(w, "Forbidden - IP Blocked", http.StatusForbidden)
+						return
+					}
+				}
+
+				// Gateway Logic: Rate Limit & Auth
+				// 1. Rate Limit (Global for route for now)
+				if s.limiter != nil {
+					if err := s.limiter.WaitN(r.Context(), 1); err != nil {
+						http.Error(w, "Rate Limit Exceeded", http.StatusTooManyRequests)
+						return
+					}
+				}
+
+				// 2. Auth Pipeline (Execute Native Authenticator on Gateway Route)
+				if route.AuthMethod != "" && route.AuthMethod != "none" {
+					if s.authenticator != nil {
+						authenticated, user, challenge, err := s.authenticator.Authenticate(r)
+						if err != nil {
+							logging.Logger.Error("Gateway authentication error", zap.Error(err))
+							http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+							return
+						}
+						if !authenticated {
+							if challenge == "" {
+								challenge, _ = s.authenticator.Challenge(r)
+							}
+							if challenge != "" {
+								w.Header().Set("WWW-Authenticate", challenge)
+								w.Header().Set("Proxy-Authenticate", challenge)
+							}
+							http.Error(w, "Unauthorized", http.StatusUnauthorized)
+							return
+						}
+						// Fast-path user identity propagation to upstream
+						r.Header.Set("X-Authenticated-User", user)
+					} else {
+						// Fallback to basic header existence check if authenticator is somehow nil
+						if r.Header.Get("Authorization") == "" {
+							http.Error(w, "Unauthorized", http.StatusUnauthorized)
+							return
+						}
+					}
+				}
+
+				logging.Logger.Info("Gateway: Proxying request",
+					zap.String("path", r.URL.Path),
+					zap.String("upstream", route.Upstream.String()))
+
+				// Update Host header
+				r.Host = route.Upstream.Host
+				route.Proxy.ServeHTTP(w, r)
+				return
+			}
+		}
+
+		// 2. Fallback to Forward Proxy
+		s.proxy.ServeHTTP(w, r)
+	}
+
+	if s.cfg.Features != nil && s.cfg.Features.BrowserID {
+		browserid.Middleware(handler)(w, r)
+	} else {
+		handler(w, r)
+	}
 }
 
 func (s *Server) Serve(l net.Listener) error {
@@ -703,6 +741,12 @@ func (s *Server) Serve(l net.Listener) error {
 	// Use GatewayHandler instead of s.proxy directly
 	s.httpServer = &http.Server{
 		Handler: http.HandlerFunc(s.GatewayHandler),
+		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
+			if sc, ok := c.(*ja3.SniffedConn); ok {
+				return context.WithValue(ctx, "ja3_conn", sc)
+			}
+			return ctx
+		},
 	}
 	return s.httpServer.Serve(l)
 }

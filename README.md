@@ -6,10 +6,12 @@ Enterprise-grade HTTP/HTTPS/SOCKS5 proxy server with advanced security features,
 
 ### Core Proxy Capabilities
 - **Multi-Protocol Support**: HTTP/1.1, HTTP/2, HTTP/3 (QUIC), SOCKS5
+- **MASQUE Protocol**: RFC 9298 CONNECT-UDP and RFC 9484 CONNECT-IP tunneling
 - **MITM Capabilities**: SSL/TLS interception with custom CA certificate
 - **Dual Mode**: Forward proxy + API Gateway (reverse proxy with routing)
 - **Traffic Mirroring**: Duplicate traffic to secondary destinations for monitoring
 - **Protocol Detection**: Safeguard against protocol confusion attacks
+- **Feature Toggles**: Runtime control of forward/reverse proxy, BrowserID, and MASQUE features
 
 ### Security & Access Control
 - **Multi-Auth Support**: Basic, NTLM, Kerberos, OIDC, SAML
@@ -19,7 +21,8 @@ Enterprise-grade HTTP/HTTPS/SOCKS5 proxy server with advanced security features,
   - Automatic threat feed refresh
 - **Web Application Firewall (WAF)**: OWASP-style pattern matching (SQLi, XSS, Command Injection, Path Traversal)
 - **GeoIP Filtering**: MaxMind DB integration with allow/block lists
-- **JA3 Fingerprinting**: TLS client fingerprinting for bot detection
+- **JA3/JA4 Fingerprinting**: Advanced TLS client fingerprinting with full JA4 support
+- **BrowserID**: Cryptographically signed browser identity tracking using JA3/JA4 + IP fingerprints
 - **DLP (Data Loss Prevention)**: Regex-based content scanning
 
 ### Advanced Features
@@ -51,14 +54,16 @@ ads-httpproxy/
 │   ├── api/            # Management API server (REST + Prometheus)
 │   ├── auth/           # Authentication (NTLM, Kerberos, OIDC, SAML)
 │   ├── bandwidth/      # Bandwidth limiting & rate control
+│   ├── browserid/      # Browser identity tracking (JA3/JA4 + IP)
 │   ├── cache/          # Redis-backed caching layer
-│   ├── config/         # Configuration (JSON/YAML + env vars)
+│   ├── config/         # Configuration (JSON/YAML + env vars + feature toggles)
 │   ├── dlp/            # Data Loss Prevention scanner
 │   ├── dnscache/       # DNS Science gRPC client integration
 │   ├── geoip/          # GeoIP lookup (MaxMind)
 │   ├── grpc/           # gRPC admin API
 │   ├── icap/           # ICAP client (REQMOD/RESPMOD)
-│   ├── ja3/            # JA3 TLS fingerprinting
+│   ├── ja3/            # JA3/JA4 TLS fingerprinting
+│   ├── masque/         # MASQUE protocol (CONNECT-UDP, CONNECT-IP, Capsule)
 │   ├── mitm/           # MITM CA management
 │   ├── pac/            # PAC file generator
 │   ├── plugin/         # Plugin system
@@ -118,6 +123,13 @@ Configuration can be provided via:
 See `examples/config.yaml` for a complete reference. Key options:
 
 ```yaml
+# Feature Toggles
+features:
+  forward_proxy: true            # Enable forward proxy mode
+  reverse_proxy: true            # Enable reverse proxy/gateway mode
+  browser_id: false              # Enable BrowserID tracking
+  masque: false                  # Enable MASQUE protocol (CONNECT-UDP/IP)
+
 # Network
 addr: ":8080"                    # HTTP/HTTPS proxy
 socks_addr: ":1080"              # SOCKS5 proxy
@@ -168,8 +180,17 @@ rtmp_target: "upstream:1935"
 
 All config values can be overridden:
 ```bash
+# Feature toggles
+export ADS_FEATURE_FORWARD="true"      # Enable forward proxy
+export ADS_FEATURE_REVERSE="true"      # Enable reverse proxy
+export ADS_FEATURE_BROWSERID="true"    # Enable BrowserID tracking
+export ADS_FEATURE_MASQUE="true"       # Enable MASQUE protocol
+
+# Network
 export ADS_ADDR=":8080"
 export ADS_ENABLE_QUIC="true"
+
+# Security
 export ADS_THREAT_FILE="/etc/threats.txt"
 export ADS_DNSSCIENCE_ENABLED="true"
 export ADS_REDIS_ENABLED="true"
@@ -212,6 +233,34 @@ docker run -d \
 
 # Or use docker-compose
 docker-compose up -d
+```
+
+### Deploying to Linux Server
+
+Use the included deployment script for automated setup on remote Linux servers:
+
+```bash
+# Build Linux binary first
+GOOS=linux GOARCH=amd64 go build -o ads-httpproxy-linux ./cmd/proxy
+
+# Deploy to server (creates systemd service)
+./deploy-proxy.sh
+
+# The script will:
+# - Upload binary to /opt/ads-httpproxy/bin/
+# - Create directory structure
+# - Generate default config if missing
+# - Install systemd service
+# - Set up logging to /opt/ads-httpproxy/logs/
+
+# Start the service
+ssh apps2 'systemctl start ads-httpproxy'
+
+# Check status
+ssh apps2 'systemctl status ads-httpproxy'
+
+# View logs
+ssh apps2 'journalctl -u ads-httpproxy -f'
 ```
 
 ### Deploying to Kubernetes
@@ -265,11 +314,49 @@ export ALL_PROXY=socks5://localhost:1080
 
 ## Advanced Features
 
+### MASQUE Protocol Support
+
+The proxy supports RFC 9298 (CONNECT-UDP) and RFC 9484 (CONNECT-IP) for tunneling UDP and IP packets over HTTP/3:
+
+```yaml
+features:
+  masque: true  # Enable MASQUE protocol support
+```
+
+**CONNECT-UDP**: Tunnel UDP traffic through the proxy for applications like QUIC, DNS, or VoIP.
+
+**CONNECT-IP**: Tunnel arbitrary IP packets for full VPN-like functionality.
+
+Both protocols use the HTTP Datagram Capsule Protocol for framing.
+
+### BrowserID Tracking
+
+Enable cryptographically signed browser identity tracking based on JA3/JA4 fingerprints and client IP:
+
+```yaml
+features:
+  browser_id: true
+```
+
+BrowserID sets a signed `__ads_bid` cookie that combines:
+- TLS fingerprint (JA4 or JA3)
+- Client IP address
+- HMAC-SHA256 signature for tamper detection
+
+Use cases:
+- Bot detection
+- Session tracking across IP changes
+- Advanced rate limiting
+- Fraud prevention
+
 ### API Gateway Mode (Reverse Proxy)
 
 Configure reverse proxy routes for API gateway functionality:
 
 ```yaml
+features:
+  reverse_proxy: true
+
 routes:
   - path: /api/v1
     upstream: http://backend:8080
@@ -397,12 +484,13 @@ The management API uses signature-based authentication:
 
 ## Performance Features
 
-- **SO_REUSEPORT**: Multi-process load distribution on Linux
+- **SO_REUSEPORT**: Multi-process load distribution on Linux and macOS
 - **HTTP/3 (QUIC)**: UDP-based multiplexed connections
+- **MASQUE Protocol**: Efficient UDP/IP tunneling over HTTP/3
 - **Connection Pooling**: Efficient connection reuse tracking
 - **Redis Caching**: High-performance response caching
 - **Protocol Detection**: Early detection prevents unnecessary processing
-- **JA3 Fingerprinting**: Fast TLS client identification
+- **JA3/JA4 Fingerprinting**: Fast TLS client identification with SHA256 hashing
 
 ## Monitoring & Observability
 
