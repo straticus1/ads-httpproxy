@@ -1,0 +1,27 @@
+# Compiled binaries
+ads-httpproxy
+ads-httpproxy-linux
+ads-httpproxy-darwin
+ads-httpproxy-windows.exe
+*.exe
+
+# Build output
+/dist/
+/build/
+
+# Go
+*.test
+*.out
+vendor/
+
+# Environment / secrets
+.env
+*.pem
+*.key
+*.crt
+
+# Editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
