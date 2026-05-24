@@ -3,6 +3,7 @@ ads-httpproxy
 ads-httpproxy-linux
 ads-httpproxy-darwin
 ads-httpproxy-windows.exe
+proxy
 *.exe
 
 # Build output
