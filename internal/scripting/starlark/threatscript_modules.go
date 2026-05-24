@@ -2,6 +2,10 @@ package starlark
 
 import (
 	"context"
+	"crypto/md5"
+	"crypto/sha1"
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"regexp"
 	"time"
@@ -21,6 +25,7 @@ func BuildThreatScriptModules(threatMgr ThreatChecker) map[string]*starlarkstruc
 	modules["notify"] = buildNotifyModule()
 	modules["runtime"] = buildRuntimeModule()
 	modules["http"] = buildHTTPModule()
+	modules["crypto"] = buildCryptoModule()
 
 	return modules
 }
@@ -419,4 +424,70 @@ func httpRespond(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tup
 	}
 	fmt.Printf("[HTTP Response] Status=%d Body=%v\n", statusCode, body)
 	return starlark.None, nil
+}
+
+// buildCryptoModule creates the cryptography and encoding module
+func buildCryptoModule() *starlarkstruct.Module {
+	return &starlarkstruct.Module{
+		Name: "crypto",
+		Members: starlark.StringDict{
+			"md5":           starlark.NewBuiltin("crypto.md5", cryptoMD5),
+			"sha1":          starlark.NewBuiltin("crypto.sha1", cryptoSHA1),
+			"sha256":        starlark.NewBuiltin("crypto.sha256", cryptoSHA256),
+			"base64_encode": starlark.NewBuiltin("crypto.base64_encode", cryptoB64Encode),
+			"base64_decode": starlark.NewBuiltin("crypto.base64_decode", cryptoB64Decode),
+		},
+	}
+}
+
+func cryptoMD5(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var data string
+	if err := starlark.UnpackPositionalArgs(b.Name(), args, kwargs, 1, &data); err != nil {
+		return nil, err
+	}
+	hash := fmt.Sprintf("%x", md5.Sum([]byte(data)))
+	return starlark.String(hash), nil
+}
+
+func cryptoSHA1(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var data string
+	if err := starlark.UnpackPositionalArgs(b.Name(), args, kwargs, 1, &data); err != nil {
+		return nil, err
+	}
+	h := sha1.New()
+	h.Write([]byte(data))
+	hash := fmt.Sprintf("%x", h.Sum(nil))
+	return starlark.String(hash), nil
+}
+
+func cryptoSHA256(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var data string
+	if err := starlark.UnpackPositionalArgs(b.Name(), args, kwargs, 1, &data); err != nil {
+		return nil, err
+	}
+	h := sha256.New()
+	h.Write([]byte(data))
+	hash := fmt.Sprintf("%x", h.Sum(nil))
+	return starlark.String(hash), nil
+}
+
+func cryptoB64Encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var data string
+	if err := starlark.UnpackPositionalArgs(b.Name(), args, kwargs, 1, &data); err != nil {
+		return nil, err
+	}
+	encoded := base64.StdEncoding.EncodeToString([]byte(data))
+	return starlark.String(encoded), nil
+}
+
+func cryptoB64Decode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var data string
+	if err := starlark.UnpackPositionalArgs(b.Name(), args, kwargs, 1, &data); err != nil {
+		return nil, err
+	}
+	decoded, err := base64.StdEncoding.DecodeString(data)
+	if err != nil {
+		return nil, fmt.Errorf("base64 decode failed: %w", err)
+	}
+	return starlark.String(string(decoded)), nil
 }

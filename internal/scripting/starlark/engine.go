@@ -4,10 +4,15 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"sync"
+	"time"
 
 	"ads-httpproxy/pkg/logging"
 
+	"go.starlark.net/lib/json"
+	"go.starlark.net/lib/math"
+	star_time "go.starlark.net/lib/time"
 	"go.starlark.net/starlark"
 	"go.starlark.net/starlarkstruct"
 	"go.uber.org/zap"
@@ -23,13 +28,19 @@ type StarlarkEngine struct {
 	mu         sync.RWMutex
 	program    *starlark.Program
 	globals    starlark.StringDict
+	stopWatch  chan struct{}
 }
 
 func NewEngine(scriptPath string, threatMgr ThreatChecker) (*StarlarkEngine, error) {
-	e := &StarlarkEngine{scriptPath: scriptPath, threatMgr: threatMgr}
+	e := &StarlarkEngine{
+		scriptPath: scriptPath,
+		threatMgr:  threatMgr,
+		stopWatch:  make(chan struct{}),
+	}
 	if err := e.Reload(); err != nil {
 		return nil, err
 	}
+	e.startWatcher()
 	return e, nil
 }
 
@@ -43,11 +54,19 @@ func (e *StarlarkEngine) Reload() error {
 
 	// Load the script
 	thread := &starlark.Thread{Name: "main"}
+	thread.Print = func(_ *starlark.Thread, msg string) {
+		logging.Logger.Debug("Starlark", zap.String("msg", msg))
+	}
 
 	// Build full ThreatScript module ecosystem
 	threatScriptModules := BuildThreatScriptModules(e.threatMgr)
 
-	predeclared := starlark.StringDict{}
+	predeclared := starlark.StringDict{
+		"json": json.Module,
+		"math": math.Module,
+		"time": star_time.Module,
+	}
+	
 	for name, module := range threatScriptModules {
 		predeclared[name] = module
 	}
@@ -103,6 +122,9 @@ func (e *StarlarkEngine) OnRequest(ctx context.Context, req *http.Request) error
 	})
 
 	thread := &starlark.Thread{Name: "request"}
+	thread.Print = func(_ *starlark.Thread, msg string) {
+		logging.Logger.Debug("Starlark", zap.String("msg", msg))
+	}
 	// Call on_request(req)
 	val, err := starlark.Call(thread, onRequest, starlark.Tuple{reqData}, nil)
 	if err != nil {
@@ -144,5 +166,39 @@ func (e *StarlarkEngine) starlarkCheckUrl(thread *starlark.Thread, b *starlark.B
 }
 
 func (e *StarlarkEngine) OnResponse(ctx context.Context, resp *http.Response) error {
+	return nil
+}
+
+func (e *StarlarkEngine) startWatcher() {
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+
+		var lastMod time.Time
+		if stat, err := os.Stat(e.scriptPath); err == nil {
+			lastMod = stat.ModTime()
+		}
+
+		for {
+			select {
+			case <-e.stopWatch:
+				return
+			case <-ticker.C:
+				if stat, err := os.Stat(e.scriptPath); err == nil {
+					if stat.ModTime().After(lastMod) {
+						lastMod = stat.ModTime()
+						logging.Logger.Info("Script change detected, reloading", zap.String("file", e.scriptPath))
+						if err := e.Reload(); err != nil {
+							logging.Logger.Error("Script hot-reload failed", zap.Error(err))
+						}
+					}
+				}
+			}
+		}
+	}()
+}
+
+func (e *StarlarkEngine) Close() error {
+	close(e.stopWatch)
 	return nil
 }

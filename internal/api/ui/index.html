@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AfterDark Proxy Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-gray-900 text-white p-8">
+    <div class="max-w-6xl mx-auto">
+        <h1 class="text-3xl font-bold mb-8 text-blue-400">⚡ AfterDark Edge Proxy Dashboard</h1>
+        
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div class="bg-gray-800 p-6 rounded-lg shadow-lg border border-gray-700">
+                <h3 class="text-gray-400 font-semibold">Active Connections</h3>
+                <p id="activeConns" class="text-4xl font-bold text-green-400">0</p>
+            </div>
+            <div class="bg-gray-800 p-6 rounded-lg shadow-lg border border-gray-700">
+                <h3 class="text-gray-400 font-semibold">Active Streams</h3>
+                <p id="activeStreams" class="text-4xl font-bold text-purple-400">0</p>
+            </div>
+            <div class="bg-gray-800 p-6 rounded-lg shadow-lg border border-gray-700">
+                <h3 class="text-gray-400 font-semibold">Uptime</h3>
+                <p id="uptime" class="text-2xl font-bold mt-2 text-indigo-400">0s</p>
+            </div>
+        </div>
+
+        <div class="bg-gray-800 p-6 rounded-lg shadow-lg border border-gray-700">
+            <h3 class="text-gray-400 font-semibold mb-4">Live Traffic Matrix (QPS)</h3>
+            <div class="relative h-64 w-full">
+                <canvas id="trafficChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const ctx = document.getElementById('trafficChart').getContext('2d');
+        const trafficChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: Array(20).fill(''),
+                datasets: [{
+                    label: 'Connections',
+                    data: Array(20).fill(0),
+                    borderColor: 'rgb(74, 222, 128)',
+                    backgroundColor: 'rgba(74, 222, 128, 0.1)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: { beginAtZero: true, grid: { color: '#374151' } },
+                    x: { grid: { display: false } }
+                },
+                animation: { duration: 0 },
+            }
+        });
+
+        async function fetchStats() {
+            try {
+                const response = await fetch('/stats');
+                const data = await response.json();
+                
+                document.getElementById('activeConns').innerText = data.active_connections || 0;
+                document.getElementById('activeStreams').innerText = data.active_streams || 0;
+                document.getElementById('uptime').innerText = (data.uptime_seconds || 0) + 's';
+
+                const currentData = trafficChart.data.datasets[0].data;
+                currentData.shift();
+                currentData.push(data.active_connections || 0);
+                trafficChart.update();
+            } catch (error) {
+                console.error('Error fetching stats:', error);
+            }
+        }
+
+        setInterval(fetchStats, 1000);
+        fetchStats();
+    </script>
+</body>
+</html>

@@ -39,8 +39,8 @@ var (
 
 	WAFViolations = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "ads_proxy_waf_violations_total",
-		Help: "Total number of WAF violations detected",
-	}, []string{"part", "reason"}) // part=url/header
+		Help: "Total number of WAF rule violations. action=block means request was rejected; action=detect means detection-only mode.",
+	}, []string{"action", "rule_id"}) // action=block|detect
 
 	ReputationBlocked = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "ads_proxy_reputation_blocked_total",
@@ -70,8 +70,10 @@ func RecordDLPViolation(source, pattern string) {
 	DLPViolations.WithLabelValues(source, pattern).Inc()
 }
 
-func RecordWAFViolation(part, reason string) {
-	WAFViolations.WithLabelValues(part, reason).Inc()
+// RecordWAFViolation records a WAF rule match.
+// action is "block" or "detect"; ruleID is the numeric CRS rule ID as a string.
+func RecordWAFViolation(action, ruleID string) {
+	WAFViolations.WithLabelValues(action, ruleID).Inc()
 }
 
 func RecordReputationBlock(riskLevel string) {

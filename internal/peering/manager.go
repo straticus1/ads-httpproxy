@@ -25,7 +25,7 @@ type PeerManager struct {
 	cfg      *config.PeeringConfig
 	peers    []string
 	mu       sync.RWMutex
-	cache    *cache.Manager // Cache for looking up hits
+	cache    *cache.HTTPCache // Cache for looking up hits
 	icpConn  *net.UDPConn
 	htcpConn *net.UDPConn
 	rrIndex  uint64
@@ -62,7 +62,7 @@ func NewManager(cfg *config.PeeringConfig) (*PeerManager, error) {
 }
 
 // SetCache configures the cache manager
-func (pm *PeerManager) SetCache(c *cache.Manager) {
+func (pm *PeerManager) SetCache(c *cache.HTTPCache) {
 	pm.mu.Lock()
 	pm.cache = c
 	pm.mu.Unlock()
@@ -176,8 +176,10 @@ func (pm *PeerManager) startICPListener() error {
 					pm.mu.RLock()
 					hit := false
 					if pm.cache != nil {
-						val, found := pm.cache.Get(urlStr)
-						hit = found && len(val) > 0
+						req, _ := http.NewRequest("GET", urlStr, nil)
+						if req != nil {
+							_, hit = pm.cache.Get(req)
+						}
 					}
 					pm.mu.RUnlock()
 

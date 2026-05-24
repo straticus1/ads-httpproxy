@@ -3,8 +3,10 @@ package config
 import (
 	"encoding/json"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -29,9 +31,16 @@ type Config struct {
 	ApiAddr         string                    `json:"api_addr" yaml:"api_addr"`
 	GrpcAddr        string                    `json:"grpc_addr" yaml:"grpc_addr"`
 	ApiSecret       string                    `json:"api_secret" yaml:"api_secret"`
+	ApiCert         string                    `json:"api_cert" yaml:"api_cert"`
+	ApiPrivKey      string                    `json:"api_privkey" yaml:"api_privkey"`
+	ApiUsers        map[string]string         `json:"api_users" yaml:"api_users"`
+	ApiRateLimit    int                       `json:"api_rate_limit" yaml:"api_rate_limit"`
+	ApiClientCA     string                    `json:"api_client_ca" yaml:"api_client_ca"`
 	BandwidthLimit  float64                   `json:"bandwidth_limit" yaml:"bandwidth_limit"` // Bytes per second
-	IcapUrl         string                    `json:"icap_url" yaml:"icap_url"`
-	DlpPatterns     []string                  `json:"dlp_patterns" yaml:"dlp_patterns"`
+	IcapUrls             []string                  `json:"icap_urls" yaml:"icap_urls"`
+	DlpPatterns          []string                  `json:"dlp_patterns" yaml:"dlp_patterns"`
+	DlpReportFile        string                    `json:"dlp_report_file" yaml:"dlp_report_file"`
+	MaxArchiveUnpackSize int                       `json:"max_archive_unpack_size" yaml:"max_archive_unpack_size"`
 	ScriptFile      string                    `json:"script_file" yaml:"script_file"`
 	Auth            *AuthConfig               `json:"auth" yaml:"auth"`
 	RtmpAddr        string                    `json:"rtmp_addr" yaml:"rtmp_addr"`
@@ -55,19 +64,40 @@ type Config struct {
 	Redis           *RedisConfig              `json:"redis" yaml:"redis"`
 	Peering         *PeeringConfig            `json:"peering" yaml:"peering"` // New Distributed Caching
 	Reputation      *ReputationConfig         `json:"reputation" yaml:"reputation"`
-	MultiTenant     *MultiTenantConfig        `json:"multi_tenant" yaml:"multi_tenant"`
-	PolicyFile      string                    `json:"policy_file" yaml:"policy_file"` // Path to CEL policy file
-	UpstreamGroups  map[string]*UpstreamGroup `json:"upstream_groups" yaml:"upstream_groups"`
+	MultiTenant       *MultiTenantConfig        `json:"multi_tenant" yaml:"multi_tenant"`
+	PolicyFile        string                    `json:"policy_file" yaml:"policy_file"` // Path to CEL policy file
+	AutoCertCacheDir  string                    `json:"autocert_cache_dir" yaml:"autocert_cache_dir"` // Cache directory for AutoCert (Let's encrypt)
+	Apps              map[string]*AppConfig     `json:"apps" yaml:"apps"` // New Virtual Host architecture
+	UpstreamGroups    map[string]*UpstreamGroup `json:"upstream_groups" yaml:"upstream_groups"`
 	Chains          map[string]*ProxyChain    `json:"chains" yaml:"chains"`
 	PAC             *PACConfig                `json:"pac" yaml:"pac"`
 	Plugins         *PluginConfig             `json:"plugins" yaml:"plugins"` // Plugin system configuration
 	Cache           *HTTPCacheConfig          `json:"cache" yaml:"cache"`     // HTTP response caching
+	WAF             *WAFConfig                `json:"waf" yaml:"waf"`         // Web Application Firewall
 }
 
 type UpstreamGroup struct {
 	Type        string   `json:"type" yaml:"type"`                 // "round-robin", "failover", "random"
 	Targets     []string `json:"targets" yaml:"targets"`           // List of upstream URLs
 	HealthCheck string   `json:"health_check" yaml:"health_check"` // URL to check health (e.g. /health)
+}
+
+// AppConfig defines a fully configurable Virtual Host entity
+type AppConfig struct {
+	Domains  []string   `json:"domains" yaml:"domains"`     // Host headers this app intercepts (e.g. api.domain.com)
+	Routes   []AppRoute `json:"routes" yaml:"routes"`       // Layer 7 route rules mapped to UpstreamGroups
+	AutoCert bool       `json:"autocert" yaml:"autocert"`   // Let's Encrypt managed certificates
+	CertFile string     `json:"cert_file" yaml:"cert_file"` // Custom local cert
+	KeyFile  string     `json:"key_file" yaml:"key_file"`   // Custom local key
+	WAF      bool       `json:"waf" yaml:"waf"`             // Enable WAF for this app
+}
+
+// AppRoute handles granular L7 rewriting and routing instructions
+type AppRoute struct {
+	PathStrip   string `json:"path_strip" yaml:"path_strip"`       // Substring to rip from matched path implicitly (e.g. /api/v1/)
+	PathRoute   string `json:"path_route" yaml:"path_route"`       // Prefix match required to execute this route
+	PathRewrite string `json:"path_rewrite" yaml:"path_rewrite"`   // Explicit rewrite rule
+	Upstream    string `json:"upstream" yaml:"upstream"`           // Maps backwards to the UpstreamGroup map
 }
 
 type ProxyChain struct {
@@ -101,6 +131,43 @@ type MemoryCacheConfig struct {
 	Enabled     bool `json:"enabled" yaml:"enabled"`
 	MaxSizeMB   int  `json:"max_size_mb" yaml:"max_size_mb"`     // Maximum memory cache size in MB
 	MaxTTL      int  `json:"max_ttl" yaml:"max_ttl"`             // Maximum TTL for memory cache (seconds)
+}
+
+// WAFConfig configures the production WAF engine (Coraza + OWASP CRS).
+type WAFConfig struct {
+	// Enabled activates the WAF. When false the engine is not initialised.
+	Enabled bool `json:"enabled" yaml:"enabled"`
+
+	// DetectionOnly logs violations but never blocks requests. Use during
+	// initial roll-out to observe false-positive rate before enforcing.
+	DetectionOnly bool `json:"detection_only" yaml:"detection_only"`
+
+	// ParanoiaLevel controls the OWASP CRS paranoia level (1–4).
+	// Level 1 catches obvious attacks with minimal false positives.
+	// Level 4 catches sophisticated attacks but requires tuning exclusions.
+	ParanoiaLevel int `json:"paranoia_level" yaml:"paranoia_level"`
+
+	// AnomalyThreshold is the inbound anomaly score that triggers a block.
+	// CRS accumulates scores across matched rules (critical=5, error=4, …).
+	// Default: 5 (block on first critical hit). Lower = stricter.
+	AnomalyThreshold int `json:"anomaly_threshold" yaml:"anomaly_threshold"`
+
+	// ExcludedRules lists CRS rule IDs to disable (e.g. "920420", "941100").
+	// Use to silence false positives without disabling entire rule groups.
+	ExcludedRules []string `json:"excluded_rules" yaml:"excluded_rules"`
+
+	// MaxBodySizeMB is the maximum request body size (in MB) to inspect.
+	// Bodies larger than this are truncated before inspection but forwarded
+	// intact. Default: 1 MB. Set 0 to use the default.
+	MaxBodySizeMB int `json:"max_body_size_mb" yaml:"max_body_size_mb"`
+
+	// EventLogFile is the path to a JSON-lines WAF event log. Each blocked or
+	// detected request appends one line. Disabled if empty.
+	EventLogFile string `json:"event_log_file" yaml:"event_log_file"`
+
+	// CustomRulesDir is an optional directory of .conf files with additional
+	// ModSecurity-format SecRule directives loaded after the CRS ruleset.
+	CustomRulesDir string `json:"custom_rules_dir" yaml:"custom_rules_dir"`
 }
 
 type ReputationConfig struct{
@@ -178,6 +245,17 @@ type AuthConfig struct {
 	OAuth2     *OAuth2Config     `json:"oauth2" yaml:"oauth2"`
 	SAML       *SAMLConfig       `json:"saml" yaml:"saml"`
 	LDAP       *LDAPConfig       `json:"ldap" yaml:"ldap"`
+
+	// AllowUnauthenticated must be explicitly set to true to allow unauthenticated
+	// forward-proxy traffic. When false (the default) and mechanism is "none",
+	// all requests are denied. This prevents accidental open-relay deployment.
+	AllowUnauthenticated bool `json:"allow_unauthenticated" yaml:"allow_unauthenticated"`
+
+	// AllowedSourceNets is a list of CIDR ranges whose clients are permitted
+	// without authentication when mechanism is "none" and AllowUnauthenticated
+	// is true. Leave empty to allow all source IPs (dangerous on public interfaces).
+	// Example: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+	AllowedSourceNets []string `json:"allowed_source_nets" yaml:"allowed_source_nets"`
 }
 
 type OIDCConfig struct {
@@ -378,6 +456,14 @@ func (c *Config) LoadEnv() error {
 	if v := os.Getenv("ADS_API_ADDR"); v != "" {
 		c.ApiAddr = v
 	}
+	if v := os.Getenv("ADS_API_RATE_LIMIT"); v != "" {
+		if rate, err := strconv.Atoi(v); err == nil {
+			c.ApiRateLimit = rate
+		}
+	}
+	if v := os.Getenv("ADS_API_CLIENT_CA"); v != "" {
+		c.ApiClientCA = v
+	}
 	if v := os.Getenv("ADS_GRPC_ADDR"); v != "" {
 		c.GrpcAddr = v
 	}
@@ -395,6 +481,17 @@ func (c *Config) LoadEnv() error {
 	}
 	if v := os.Getenv("ADS_FTP_ADDR"); v != "" {
 		c.FtpAddr = v
+	}
+	if v := os.Getenv("ADS_ICAP_URLS"); v != "" {
+		c.IcapUrls = strings.Split(v, ",")
+	}
+	if v := os.Getenv("ADS_DLP_REPORT_FILE"); v != "" {
+		c.DlpReportFile = v
+	}
+	if v := os.Getenv("ADS_MAX_ARCHIVE_UNPACK_SIZE"); v != "" {
+		if size, err := strconv.Atoi(v); err == nil {
+			c.MaxArchiveUnpackSize = size
+		}
 	}
 	if v := os.Getenv("ADS_FTP_TARGET"); v != "" {
 		c.FtpTarget = v
@@ -529,6 +626,24 @@ func (c *Config) Validate() error {
 		return errors.New("addr is required")
 	}
 	if c.Auth != nil {
+		// Open-relay prevention: if no auth mechanism is configured the proxy
+		// is closed by default. Operators must explicitly opt in to unauthenticated
+		// access, and must restrict it to trusted source networks.
+		if (c.Auth.Mechanism == "" || c.Auth.Mechanism == "none") && c.Auth.AllowUnauthenticated {
+			if len(c.Auth.AllowedSourceNets) == 0 {
+				// Allow but emit a loud warning — this is dangerous on public interfaces.
+				// We don't hard-fail because some deployments (air-gapped, localhost-only)
+				// legitimately need this, but operators must be aware.
+				_ = "warn: allow_unauthenticated=true with no allowed_source_nets — proxy accepts all clients"
+			}
+			// Validate CIDR syntax eagerly so the server fails fast rather than
+			// silently allowing everything due to a malformed CIDR.
+			for _, cidr := range c.Auth.AllowedSourceNets {
+				if _, _, err := net.ParseCIDR(strings.TrimSpace(cidr)); err != nil {
+					return errors.New("invalid allowed_source_net CIDR: " + cidr)
+				}
+			}
+		}
 		switch c.Auth.Mechanism {
 		case "kerberos":
 			if c.Auth.KRB5Keytab == "" {

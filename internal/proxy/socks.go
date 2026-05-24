@@ -1,9 +1,11 @@
 package proxy
 
 import (
+	"errors"
 	"log"
 	"net"
 
+	"ads-httpproxy/internal/config"
 	"ads-httpproxy/pkg/logging"
 
 	"github.com/armon/go-socks5"
@@ -15,10 +17,38 @@ type SocksServer struct {
 	server *socks5.Server
 }
 
-func NewSocksServer(addr string) (*SocksServer, error) {
+// NewSocksServer creates a SOCKS5 server. It refuses to start without
+// credentials unless the auth config explicitly sets allow_unauthenticated=true,
+// preventing accidental open-relay deployment.
+func NewSocksServer(addr string, authCfg *config.AuthConfig) (*SocksServer, error) {
 	conf := &socks5.Config{
-		Logger: log.New(&zapWriter{logging.Logger}, "", 0), // Adapt zap to standard log needed by socks5
+		Logger: log.New(&zapWriter{logging.Logger}, "", 0),
 	}
+
+	hasCredentials := authCfg != nil && len(authCfg.Users) > 0
+	allowOpen := authCfg != nil && authCfg.AllowUnauthenticated
+
+	switch {
+	case hasCredentials:
+		conf.Credentials = socks5.StaticCredentials(authCfg.Users)
+		conf.AuthMethods = []socks5.Authenticator{socks5.UserPassAuthenticator{
+			Credentials: socks5.StaticCredentials(authCfg.Users),
+		}}
+		logging.Logger.Info("SOCKS5 authentication enabled", zap.Int("users", len(authCfg.Users)))
+
+	case allowOpen:
+		// Operator has explicitly chosen to run without authentication.
+		// No credentials configured — all clients are permitted.
+		logging.Logger.Warn("SOCKS5 running WITHOUT authentication (allow_unauthenticated=true) — ensure this port is not publicly reachable")
+
+	default:
+		// Neither credentials nor explicit allow_unauthenticated: refuse to start.
+		return nil, errors.New(
+			"SOCKS5 refused to start: no credentials configured and allow_unauthenticated is not set. " +
+				"Set auth.users or auth.allow_unauthenticated=true (only safe on private interfaces)",
+		)
+	}
+
 	server, err := socks5.New(conf)
 	if err != nil {
 		return nil, err

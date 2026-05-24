@@ -17,4 +17,7 @@ type Engine interface {
 	// OnResponse is called after the response is received from the backend.
 	// It can modify the response.
 	OnResponse(ctx context.Context, resp *http.Response) error
+
+	// Close shuts down any background routines the engine manages.
+	Close() error
 }

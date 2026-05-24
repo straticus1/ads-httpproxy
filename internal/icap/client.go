@@ -28,6 +28,8 @@ type Client struct {
 	connPool     chan net.Conn
 	poolSize     int
 	options      *OptionsResponse
+	healthy      bool
+	healthMu     sync.RWMutex
 }
 
 // OptionsResponse represents ICAP OPTIONS response.
@@ -52,6 +54,7 @@ func NewClient(serverURL string) *Client {
 		AllowOptions: true,
 		poolSize:     10,
 		connPool:     make(chan net.Conn, 10),
+		healthy:      true,
 	}
 
 	// Perform OPTIONS request to discover server capabilities
@@ -645,4 +648,18 @@ func (c *Client) Close() error {
 		conn.Close()
 	}
 	return nil
+}
+
+// IsHealthy returns true if the client passes health checks
+func (c *Client) IsHealthy() bool {
+	c.healthMu.RLock()
+	defer c.healthMu.RUnlock()
+	return c.healthy
+}
+
+// SetHealthy marks the client as healthy or unhealthy
+func (c *Client) SetHealthy(healthy bool) {
+	c.healthMu.Lock()
+	defer c.healthMu.Unlock()
+	c.healthy = healthy
 }

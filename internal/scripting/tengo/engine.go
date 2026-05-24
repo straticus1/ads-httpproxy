@@ -105,3 +105,7 @@ func (e *TengoEngine) OnRequest(ctx context.Context, req *http.Request) error {
 func (e *TengoEngine) OnResponse(ctx context.Context, resp *http.Response) error {
 	return nil
 }
+
+func (e *TengoEngine) Close() error {
+	return nil
+}

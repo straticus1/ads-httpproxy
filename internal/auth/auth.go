@@ -79,7 +79,15 @@ func (sm *SessionManager) Delete(key string) {
 	delete(sm.sessions, key)
 }
 
-// Factory returns the appropriate Authenticator based on config
+// NewAuthenticator returns the Authenticator described by cfg.
+//
+// It never returns (nil, nil). When mechanism is "none":
+//   - If AllowUnauthenticated is false (the default), a DenyAllAuthenticator is
+//     returned — every request is rejected. This is the secure default that
+//     prevents accidental open-relay deployment.
+//   - If AllowUnauthenticated is true, an OpenAuthenticator is returned. When
+//     AllowedSourceNets is set only clients from those CIDRs are allowed;
+//     an empty list permits all source IPs (only safe on private interfaces).
 func NewAuthenticator(cfg *config.AuthConfig, logger *zap.Logger) (Authenticator, error) {
 	switch cfg.Mechanism {
 	case "ldap":
@@ -97,6 +105,12 @@ func NewAuthenticator(cfg *config.AuthConfig, logger *zap.Logger) (Authenticator
 	case "saml":
 		return NewSAMLAuthenticator(cfg.SAML, logger)
 	default:
-		return nil, nil // No auth
+		// mechanism = "none" (or unrecognised).
+		if !cfg.AllowUnauthenticated {
+			// Secure default: deny everything. Operators must explicitly set
+			// allow_unauthenticated: true to open the proxy.
+			return DenyAllAuthenticator{}, nil
+		}
+		return NewOpenAuthenticator(cfg.AllowedSourceNets)
 	}
 }

@@ -97,7 +97,7 @@ func main() {
 	httpListener = ja3.NewListener(httpListener)
 
 	srv := proxy.NewServer(cfg)
-	socksSrv, err := proxy.NewSocksServer(cfg.SocksAddr)
+	socksSrv, err := proxy.NewSocksServer(cfg.SocksAddr, cfg.Auth)
 	if err != nil {
 		logging.Logger.Fatal("Failed to init socks server", zap.Error(err))
 	}

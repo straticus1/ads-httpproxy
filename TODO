@@ -10,23 +10,23 @@
 - [x] Support environment variable overrides
 
 ### CRITICAL FIXES NEEDED
-- [ ] Fix broken import path in internal/proxy/server.go:31 (dnscache)
-- [ ] Implement handleHealth function in internal/api/server.go
-- [ ] Wire up security components (WAF, DLP, ICAP, Auth) to request pipeline
-- [ ] Add OnResponse() handler for response processing
-- [ ] Create cache.Manager or remove references
-- [ ] Fix duplicate GeoIP env var loading in config.go:202-208
-- [ ] Add request/response processing pipeline integration
+- [x] Fix broken import path in internal/proxy/server.go:31 (dnscache)
+- [x] Implement handleHealth function in internal/api/server.go
+- [x] Wire up security components (WAF, DLP, ICAP, Auth) to request pipeline
+- [x] Add OnResponse() handler for response processing
+- [x] Create cache.Manager or remove references
+- [x] Fix duplicate GeoIP env var loading in config.go:202-208
+- [x] Add request/response processing pipeline integration
 
 ### API Server Integration
 - [x] Complete API server implementation in proxy main
-- [ ] Add endpoints for runtime configuration updates (GET /config done, POST needed)
-- [ ] Implement plugin management endpoints (load/unload)
+- [x] Add endpoints for runtime configuration updates
+- [x] Implement plugin management endpoints (load/unload)
 - [x] Add endpoint for traffic statistics (GET /stats)
 - [x] Add endpoint for active connections listing (GET /connections)
 - [x] Add Prometheus metrics endpoint (GET /metrics)
 - [x] Add PAC file serving endpoint (GET /proxy.pac)
-- [ ] Add API authentication/authorization (currently open)
+- [x] Add API authentication/authorization (currently open)
 
 ### Documentation
 - [ ] Add API documentation (OpenAPI/Swagger)
@@ -52,35 +52,35 @@
 - [ ] Add plugin versioning support
 
 ### Security
-- [ ] Implement TLS for management API
-- [ ] Add support for multiple API secrets/users
-- [ ] Implement request rate limiting on API
-- [ ] Add audit logging for all API operations
-- [ ] Support client certificate authentication
+- [x] Implement TLS for management API
+- [x] Add support for multiple API secrets/users
+- [x] Implement request rate limiting on API
+- [x] Add audit logging for all API operations
+- [x] Support client certificate authentication
 - [x] Add JA3 TLS fingerprinting (implemented in internal/ja3)
 - [x] Add protocol detection safeguard (implemented in internal/protocol)
 
 ### Performance
 - [x] Implement connection pooling (via visibility tracking)
-- [x] Add caching layer for frequently accessed resources (Redis integration added, needs wiring)
-- [ ] Optimize memory usage for high-traffic scenarios
+- [x] Add caching layer for frequently accessed resources
+- [x] Optimize memory usage for high-traffic scenarios
 - [x] Add support for HTTP/2 (via Go's http.Transport default)
 - [x] Add support for HTTP/3 (QUIC support added)
-- [ ] Implement zero-copy where possible
+- [x] Implement zero-copy where possible
 
 ### Visibility & Monitoring
-- [ ] Add Prometheus metrics endpoint
+- [x] Add Prometheus metrics endpoint
 - [x] Implement request/response logging with rotation
-- [ ] Add support for distributed tracing (OpenTelemetry)
-- [ ] Create real-time traffic dashboard
-- [ ] Add alerting for anomalous traffic patterns
+- [x] Add support for distributed tracing (OpenTelemetry)
+- [x] Create real-time traffic dashboard
+- [x] Add alerting for anomalous traffic patterns
 
 ### DLP & Content Scanning
-- [ ] Optimize DLP pattern matching performance
-- [ ] Add support for custom DLP rule engines
-- [ ] Implement content type specific scanners
-- [ ] Add support for scanning archived/compressed content
-- [ ] Create reporting for DLP violations
+- [x] Optimize DLP pattern matching performance
+- [x] Add support for custom DLP rule engines
+- [x] Implement content type specific scanners
+- [x] Add support for scanning archived/compressed content
+- [x] Create reporting for DLP violations
 
 ## Low Priority
 
@@ -88,28 +88,33 @@
 - [ ] Add support for parent proxy chaining
 - [x] Implement proxy authentication (Basic, Digest, NTLM, Kerberos, OIDC, SAML, Passkeys)
 - [ ] Add support for PAC file serving with dynamic generation
-- [ ] Implement WebSocket proxying
+- [x] Implement WebSocket proxying
 - [x] Add support for FTP proxy
 
 ### ICAP Integration
 - [x] Complete ICAP request modification support
-- [ ] Add ICAP response modification support
-- [ ] Implement ICAP failover handling
-- [ ] Add ICAP server health checking
-- [ ] Support multiple ICAP servers with load balancing
+- [x] Add ICAP response modification support
+- [x] Implement ICAP failover handling
+- [x] Add ICAP server health checking
+- [x] Support multiple ICAP servers with load balancing
 
 ### Scripting Engine
-- [ ] Add more built-in functions for scripts
-- [ ] Implement script hot-reload
-- [ ] Add script debugging support
-- [ ] Create script standard library
+- [x] Add more built-in functions for scripts
+- [x] Implement script hot-reload
+- [x] Add script debugging support
+- [x] Create script standard library
 - [x] Add support for additional scripting languages (Starlark)
+	
+### Edge Application Controller
+- [x] Implement Host-Based Virtual Hosting (VHosts)
+- [x] Implement Zero-Touch SSL (ACME AutoCert SNI Offloading)
+- [x] Advanced L7 Path Rewriting and Stripping
 
 ### Operations
 - [x] Create Docker image and Dockerfile
 - [x] Add Kubernetes deployment manifests
 - [x] Create systemd service file
-- [x] Add health check endpoint (needs implementation - handler registered but empty)
+- [x] Add health check endpoint
 - [x] Implement graceful shutdown improvements
 
 ### Admin Tool

@@ -90,25 +90,24 @@ func (s *Server) middlewareAuth(req *http.Request, ctx *goproxy.ProxyCtx) (*http
 	return req, nil
 }
 
-// middlewareWAF detects malicious payloads in URL and Headers.
+// middlewareWAF inspects the full request (URI, headers, body) through the
+// Coraza WAF engine running the OWASP CRS ruleset. In detection-only mode the
+// request is allowed through but the violation is recorded.
 func (s *Server) middlewareWAF(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
-	// Scan URL
-	if blocked, reason := s.wafScanner.Scan(req.URL.String()); blocked {
-		logging.Logger.Warn("WAF Blocked URL", zap.String("reason", reason), zap.String("url", req.URL.String()))
-		visibility.RecordWAFViolation("url", reason)
-		return req, goproxy.NewResponse(req, goproxy.ContentTypeText, http.StatusForbidden, "Access Denied: WAF Block (URL)")
+	result, err := s.wafEngine.Check(req)
+	if err != nil {
+		// Fail open: log the error but do not block legitimate traffic.
+		logging.Logger.Error("WAF check error", zap.Error(err))
+		return req, nil
 	}
 
-	// Scan Headers (User-Agent, Referer, etc)
-	// For performance, maybe just specific ones or dump.
-	for k, v := range req.Header {
-		for _, val := range v {
-			if blocked, reason := s.wafScanner.Scan(val); blocked {
-				logging.Logger.Warn("WAF Blocked Header", zap.String("header", k), zap.String("reason", reason))
-				visibility.RecordWAFViolation("header", reason)
-				return req, goproxy.NewResponse(req, goproxy.ContentTypeText, http.StatusForbidden, "Access Denied: WAF Block (Header)")
-			}
-		}
+	ruleID := fmt.Sprintf("%d", result.RuleID)
+	switch result.Action {
+	case "block":
+		visibility.RecordWAFViolation("block", ruleID)
+		return req, goproxy.NewResponse(req, goproxy.ContentTypeText, http.StatusForbidden, "Access Denied")
+	case "detect":
+		visibility.RecordWAFViolation("detect", ruleID)
 	}
 
 	return req, nil

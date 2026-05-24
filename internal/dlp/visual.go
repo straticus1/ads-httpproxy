@@ -14,11 +14,13 @@ import (
 
 // VisualDLP implements advanced DLP with visual analysis capabilities
 type VisualDLP struct {
-	regexScanner      *RegexScanner
+	ruleEngine        RuleEngine
 	categoryClient    *CategoryClient
 	screenshotService string
 	ocrEnabled        bool
 	mu                sync.RWMutex
+	extractor         *Extractor
+	reporter          *Reporter
 
 	// Policy configuration
 	blockCategories   map[string]bool
@@ -62,20 +64,26 @@ type ScanResult struct {
 }
 
 // NewVisualDLP creates a new Visual DLP instance
-func NewVisualDLP(patterns []string, categoryServiceURL, screenshotServiceURL string) (*VisualDLP, error) {
-	scanner, err := NewRegexScanner(patterns)
+func NewVisualDLP(patterns []string, categoryServiceURL, screenshotServiceURL, reportFile string, maxArchiveSize int64) (*VisualDLP, error) {
+	engine, err := NewRegexEngine(patterns)
+	if err != nil {
+		return nil, err
+	}
+	reporter, err := NewReporter(reportFile)
 	if err != nil {
 		return nil, err
 	}
 
 	return &VisualDLP{
-		regexScanner:      scanner,
+		ruleEngine:        engine,
 		categoryClient:    NewCategoryClient(categoryServiceURL),
 		screenshotService: screenshotServiceURL,
 		ocrEnabled:        true,
 		blockCategories:   make(map[string]bool),
 		captureCategories: make(map[string]bool),
 		sensitivePatterns: patterns,
+		extractor:         NewExtractor(maxArchiveSize),
+		reporter:          reporter,
 	}, nil
 }
 
@@ -183,7 +191,7 @@ func (v *VisualDLP) ScanRequest(url string, body []byte) *ScanResult {
 
 	// 3. Scan body for sensitive patterns
 	if len(body) > 0 {
-		matched, pattern := v.regexScanner.Scan(body)
+		matched, pattern := v.ruleEngine.Scan(body)
 		if matched {
 			result.Violations = append(result.Violations, pattern)
 			if !result.Blocked {
@@ -212,11 +220,23 @@ func (v *VisualDLP) ScanRequest(url string, body []byte) *ScanResult {
 		result.Evidence["screenshot_scheduled"] = true
 	}
 
+	if result.Blocked {
+		v.reportViolation(*result, url, "")
+	}
+
 	return result
 }
 
 // ScanUpload scans file uploads for sensitive data
 func (v *VisualDLP) ScanUpload(filename string, content []byte) *ScanResult {
+	// First check if it's an archive
+	if v.extractor != nil {
+		isArchive, arcRes := v.extractor.ExtractAndScan(filename, content, v.ScanUpload)
+		if isArchive && arcRes != nil {
+			return arcRes // short-circuits here on extracted content matches
+		}
+	}
+
 	result := &ScanResult{
 		Timestamp: time.Now(),
 		Action:    "allow",
@@ -227,13 +247,14 @@ func (v *VisualDLP) ScanUpload(filename string, content []byte) *ScanResult {
 	result.Evidence["size"] = len(content)
 
 	// Scan content for sensitive patterns
-	matched, pattern := v.regexScanner.Scan(content)
+	matched, pattern := v.ruleEngine.Scan(content)
 	if matched {
 		result.Violations = append(result.Violations, pattern)
 		result.Blocked = true
 		result.Reason = "Sensitive data detected in upload"
 		result.Action = "block"
 		result.Evidence["dlp_match"] = pattern
+		v.reportViolation(*result, "", filename)
 	}
 
 	// TODO: If it's an image, perform OCR and scan the extracted text
@@ -281,6 +302,21 @@ var DefaultDLPPatterns = []string{
 }
 
 // GetDefaultVisualDLP returns a VisualDLP instance with default patterns
-func GetDefaultVisualDLP(categoryServiceURL, screenshotServiceURL string) (*VisualDLP, error) {
-	return NewVisualDLP(DefaultDLPPatterns, categoryServiceURL, screenshotServiceURL)
+func GetDefaultVisualDLP(categoryServiceURL, screenshotServiceURL, reportFile string, maxArchiveSize int64) (*VisualDLP, error) {
+	return NewVisualDLP(DefaultDLPPatterns, categoryServiceURL, screenshotServiceURL, reportFile, maxArchiveSize)
+}
+
+func (v *VisualDLP) reportViolation(res ScanResult, urlStr string, filename string) {
+	if v.reporter != nil {
+		v.reporter.Record(ViolationReport{
+			Timestamp:  time.Now(),
+			Action:     res.Action,
+			Reason:     res.Reason,
+			URL:        urlStr,
+			Filename:   filename,
+			Violations: res.Violations,
+			Categories: res.Categories,
+			Evidence:   res.Evidence,
+		})
+	}
 }
