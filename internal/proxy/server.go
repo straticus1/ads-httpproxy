@@ -661,19 +661,16 @@ func NewServer(cfg *config.Config) *Server {
 		s.middleware = append(s.middleware, s.middlewareICAP)
 	}
 
-	// 9. Bandwidth Limiter (Request)
+	// 9. Bandwidth Limiter (Request) — wraps the request body so each byte
+	// consumed by the upstream read is throttled to cfg.BandwidthLimit bytes/sec.
 	if s.limiter != nil {
 		s.middleware = append(s.middleware, func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
-			// Calculate approximate size (Header + Body could be streaming, so we estimate/wait on chunks)
-			// For simple rate limiting (requests/sec), use WaitN(1)
-			// For bandwidth (bytes/sec), we'd need to wrap the body.
-			// Currently internal/bandwidth supports generic WaitN.
-			// Let's assume request count or rough byte estimate here for now.
-			// A true bandwidth limiter wraps the connection/reader, which is done at net.Listener level or body wrapper.
-			// Here we just enforcing "Request" rate mostly if using token bucket.
-			if err := s.limiter.WaitN(req.Context(), 1); err != nil {
-				logging.Logger.Warn("Rate limit exceeded", zap.Error(err))
-				return req, goproxy.NewResponse(req, goproxy.ContentTypeText, http.StatusTooManyRequests, "Rate Limit Exceeded")
+			if req.Body != nil {
+				req.Body = &bandwidth.LimitedReadCloser{
+					RC:      req.Body,
+					Limiter: s.limiter,
+					Ctx:     req.Context(),
+				}
 			}
 			return req, nil
 		})

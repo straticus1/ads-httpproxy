@@ -1,20 +1,27 @@
 package logging
 
 import (
+	"os"
+
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 var Logger *zap.Logger
 
 func Init() error {
-	var err error
-	// For production, use NewProduction() for JSON format and performance
-	// For development, use NewDevelopment() for human-readable output
-	Logger, err = zap.NewDevelopment()
-	if err != nil {
-		return err
+	level := zapcore.InfoLevel
+	if v := os.Getenv("ADS_LOG_LEVEL"); v != "" {
+		if err := level.UnmarshalText([]byte(v)); err != nil {
+			level = zapcore.InfoLevel
+		}
 	}
-	return nil
+
+	cfg := zap.NewDevelopmentConfig()
+	cfg.Level = zap.NewAtomicLevelAt(level)
+	var err error
+	Logger, err = cfg.Build()
+	return err
 }
 
 func Sync() {

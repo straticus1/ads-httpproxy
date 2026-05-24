@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -624,6 +625,10 @@ func (c *Config) LoadEnv() error {
 func (c *Config) Validate() error {
 	if c.Addr == "" {
 		return errors.New("addr is required")
+	}
+
+	if c.ApiSecret == "changeme" {
+		fmt.Fprintln(os.Stderr, "WARNING: api_secret is set to the default value 'changeme' — change this before deploying to production")
 	}
 	if c.Auth != nil {
 		// Open-relay prevention: if no auth mechanism is configured the proxy

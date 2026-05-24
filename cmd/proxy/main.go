@@ -21,6 +21,31 @@ import (
 	"go.uber.org/zap"
 )
 
+// dialMirror attempts to connect to addr, retrying up to maxAttempts times
+// with simple linear backoff. Returns nil if all attempts fail.
+func dialMirror(addr string, maxAttempts int) net.Conn {
+	for i := 0; i < maxAttempts; i++ {
+		if i > 0 {
+			time.Sleep(time.Duration(i) * 200 * time.Millisecond)
+		}
+		c, err := net.DialTimeout("tcp", addr, 2*time.Second)
+		if err == nil {
+			return c
+		}
+		logging.Logger.Warn("Failed to dial mirror",
+			zap.String("addr", addr),
+			zap.Int("attempt", i+1),
+			zap.Int("max_attempts", maxAttempts),
+			zap.Error(err),
+		)
+	}
+	logging.Logger.Error("Mirror destination unreachable after all attempts, mirroring disabled for this connection",
+		zap.String("addr", addr),
+		zap.Int("attempts", maxAttempts),
+	)
+	return nil
+}
+
 func main() {
 	configFile := flag.String("config", "", "Path to configuration file")
 	flag.Parse()
@@ -73,10 +98,8 @@ func main() {
 			return &mirror.Listener{
 				Listener: l,
 				MirrorFactory: func(remoteAddr net.Addr) io.Writer {
-					// Connect to mirror destination for each connection
-					c, err := net.Dial("tcp", cfg.MirrorAddr)
-					if err != nil {
-						logging.Logger.Error("Failed to dial mirror", zap.Error(err))
+					c := dialMirror(cfg.MirrorAddr, 3)
+					if c == nil {
 						return nil
 					}
 					return c
@@ -167,6 +190,8 @@ func main() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+
+	socksSrv.Shutdown()
 
 	if err := srv.Shutdown(ctx); err != nil {
 		logging.Logger.Error("Server forced to shutdown", zap.Error(err))

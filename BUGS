@@ -12,22 +12,11 @@ None currently identified.
 
 ### Medium
 
-- **Mirror connection error handling**: When mirror destination is unreachable, errors are logged but the connection is not retried. This could lead to silent data loss in mirroring scenarios.
-  - Location: `cmd/proxy/main.go:36-43`
-  - Impact: Traffic mirroring may fail silently
-  - Workaround: Monitor logs for "Failed to dial mirror" errors
+None currently identified.
 
 ### Low
 
-- **Configuration defaults**: The proxy uses hardcoded defaults when no configuration file is provided. This may not be suitable for all deployment scenarios.
-  - Location: `internal/config/config.go:19-29`
-  - Impact: Users must modify code or implement config file loading
-  - Workaround: Modify default values in code before building
-
-- **API secret default**: The default API secret is "changeme" which is insecure for production use.
-  - Location: `internal/config/config.go:27`
-  - Impact: Security risk if not changed
-  - Workaround: Always change API secret before deploying
+None currently identified.
 
 ### Documentation
 
@@ -39,27 +28,9 @@ None currently identified.
 
 ### Current Limitations
 
-1. **Configuration Loading**: JSON/YAML configuration file loading is planned but not yet implemented. Configuration currently relies on hardcoded defaults.
+1. **Error Recovery**: Limited error recovery mechanisms for transient failures (network issues, temporary service unavailability).
 
-2. **API Server Not Started**: The API server is defined but not started in the main proxy application. Admin tool cannot currently connect.
-   - Location: `cmd/proxy/main.go`
-   - Status: Implementation pending
-
-3. **Plugin Loading**: Plugin architecture exists but no mechanism to load plugins at runtime is implemented yet.
-
-4. **No Graceful Shutdown**: While signal handling is implemented, servers don't perform graceful connection draining on shutdown.
-
-5. **Error Recovery**: Limited error recovery mechanisms for transient failures (network issues, temporary service unavailability).
-
-6. **Logging Configuration**: Logging is hardcoded to use zap defaults. No configuration options for log levels, outputs, or formats.
-
-7. **Certificate Management**: MITM CA certificate generation and management needs implementation.
-
-8. **ICAP Integration Incomplete**: ICAP client exists but integration into proxy flow is not complete.
-
-9. **DLP Scanner Not Integrated**: DLP scanner exists but is not called from proxy request/response handlers.
-
-10. **Bandwidth Limiter Not Applied**: Bandwidth limiter exists but is not applied to connections.
+2. **SOCKS Connection Draining**: Graceful shutdown closes the SOCKS5 listener (stopping new connections) but does not drain active connections. The `go-socks5` library does not expose a drain mechanism.
 
 ## Reporting Bugs
 
@@ -78,4 +49,35 @@ Please open an issue on GitHub with the bug report.
 
 ## Fixed Bugs
 
-None yet (initial release).
+- **Mirror connection error handling**: Mirror `MirrorFactory` now retries the TCP dial up to 3 times with linear backoff before giving up, and logs a distinct error when all attempts fail instead of silently dropping.
+  - Fixed in: `cmd/proxy/main.go` (`dialMirror` helper)
+
+- **Configuration defaults**: JSON/YAML configuration file loading is now fully implemented. Pass `-config <path>` to load from a file; env vars override file values.
+  - Fixed in: `internal/config/config.go` (`Load`, `LoadEnv`), `cmd/proxy/main.go`
+
+- **API secret default**: `Validate()` now prints a prominent stderr warning when the API secret is still set to the default `"changeme"`.
+  - Fixed in: `internal/config/config.go` (`Validate`)
+
+- **API Server Not Started**: `proxy.Server.Serve()` now calls `s.apiServer.Start()` before accepting connections.
+  - Fixed in: `internal/proxy/server.go` (`Serve`)
+
+- **Plugin Loading**: Plugin architecture is fully wired — `proxy.NewServer` loads plugins from `cfg.Plugins.PluginList` and auto-loads from `cfg.Plugins.PluginDir`. Plugins are applied in both request and response middleware chains.
+  - Fixed in: `internal/proxy/server.go`
+
+- **No Graceful Shutdown (SOCKS)**: `SocksServer` now stores its listener and exposes a `Shutdown()` method; `main.go` calls it on SIGINT/SIGTERM before shutting down the HTTP server.
+  - Fixed in: `internal/proxy/socks.go`, `cmd/proxy/main.go`
+
+- **Logging Configuration**: Log level is now configurable via the `ADS_LOG_LEVEL` environment variable (e.g. `debug`, `info`, `warn`, `error`). Defaults to `info`.
+  - Fixed in: `pkg/logging/logger.go`
+
+- **Certificate Management**: `mitm.LoadCA` now generates a unique self-signed CA per proxy instance when no cert/key files are configured, replacing the shared goproxy built-in CA.
+  - Fixed in: `internal/mitm/ca.go` (`GenerateCA`, updated `LoadCA`)
+
+- **ICAP Integration**: ICAP client is fully integrated into the request (`ReqMod`) and response (`RespMod`) middleware chains.
+  - Fixed in: `internal/proxy/server.go`, `internal/proxy/middleware.go`
+
+- **DLP Scanner Not Integrated**: DLP scanner is fully integrated into the request and response middleware chains.
+  - Fixed in: `internal/proxy/server.go`, `internal/proxy/middleware.go`
+
+- **Bandwidth Limiter Not Applied**: Bandwidth limiter now wraps `req.Body` with a `bandwidth.LimitedReadCloser`, throttling actual bytes read at `cfg.BandwidthLimit` bytes/sec instead of the previous request-count approximation.
+  - Fixed in: `internal/proxy/server.go`
