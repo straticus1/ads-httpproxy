@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"sync"
@@ -14,24 +15,24 @@ import (
 	"ads-httpproxy/internal/auth"
 	"ads-httpproxy/internal/bandwidth"
 	"ads-httpproxy/internal/browserid"
-	"ads-httpproxy/internal/ja3"
 	"ads-httpproxy/internal/cache"
 	"ads-httpproxy/internal/config"
 	"ads-httpproxy/internal/dlp"
 	"ads-httpproxy/internal/geoip"
 	"ads-httpproxy/internal/icap"
+	"ads-httpproxy/internal/ja3"
 	"ads-httpproxy/internal/masque"
 	"ads-httpproxy/internal/mitm"
 	"ads-httpproxy/internal/ml"
 	"ads-httpproxy/internal/peering"
 	"ads-httpproxy/internal/plugin"
 	"ads-httpproxy/internal/policy"
-	"ads-httpproxy/internal/telemetry"
 	"ads-httpproxy/internal/reputation"
 	"ads-httpproxy/internal/screenshot"
 	"ads-httpproxy/internal/scripting/engine"
 	"ads-httpproxy/internal/scripting/starlark"
 	"ads-httpproxy/internal/scripting/tengo"
+	"ads-httpproxy/internal/telemetry"
 	"ads-httpproxy/internal/threat"
 	"ads-httpproxy/internal/visibility"
 	"ads-httpproxy/internal/waf"
@@ -188,9 +189,10 @@ func NewServer(cfg *config.Config) *Server {
 	if err != nil {
 		logging.Logger.Error("Failed to create policy engine", zap.Error(err))
 	}
-	// TODO: Implement LoadFromFile for policy engine
 	if cfg.PolicyFile != "" {
-		logging.Logger.Warn("Policy file loading not yet implemented", zap.String("file", cfg.PolicyFile))
+		if err := policyEngine.LoadFromFile(cfg.PolicyFile); err != nil {
+			logging.Logger.Fatal("Failed to load policy file", zap.String("file", cfg.PolicyFile), zap.Error(err))
+		}
 	}
 
 	// Configure Peering
@@ -463,25 +465,25 @@ func NewServer(cfg *config.Config) *Server {
 	}
 
 	s := &Server{
-		cfg:           cfg,
-		proxy:         p,
-		pm:            pm,
-		apiServer:     apiServer,
-		limiter:       l,
-		icapClient:    icapClient,
-		dlpScanner:    dlpScanner,
-		wafEngine:     wafEngine,
-		threatMgr:     threatMgr,
-		geoIP:         geoLookup,
-		scriptEngine:  scriptEngine,
-		policyEngine:  policyEngine,
-		peerMgr:       peerMgr,
-		reputation:    repClient,
-		feedManager:   feedMgr,
-		authenticator: authenticator,
-		httpCache:     httpCacheMgr,
-		screenshot:    screenshotSvc,
-		upstreamMgr:   um,
+		cfg:            cfg,
+		proxy:          p,
+		pm:             pm,
+		apiServer:      apiServer,
+		limiter:        l,
+		icapClient:     icapClient,
+		dlpScanner:     dlpScanner,
+		wafEngine:      wafEngine,
+		threatMgr:      threatMgr,
+		geoIP:          geoLookup,
+		scriptEngine:   scriptEngine,
+		policyEngine:   policyEngine,
+		peerMgr:        peerMgr,
+		reputation:     repClient,
+		feedManager:    feedMgr,
+		authenticator:  authenticator,
+		httpCache:      httpCacheMgr,
+		screenshot:     screenshotSvc,
+		upstreamMgr:    um,
 		anomalyMonitor: ml.NewAnomalyMonitor(),
 	}
 
@@ -515,14 +517,14 @@ func NewServer(cfg *config.Config) *Server {
 					}
 					req.URL.Scheme = target.Scheme
 					req.URL.Host = target.Host
-					
+
 					// Rewrite Path logic
 					if r.PathRewrite != "" {
 						req.URL.Path = r.PathRewrite
 					} else if r.PathStrip != "" {
 						req.URL.Path = strings.TrimPrefix(req.URL.Path, r.PathStrip)
 					}
-					
+
 					// Prepend target path if there is one
 					if target.Path != "" && target.Path != "/" {
 						req.URL.Path = target.Path + req.URL.Path
@@ -755,10 +757,17 @@ func (s *Server) GatewayHandler(w http.ResponseWriter, r *http.Request) {
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		// L7 Application Edge Routing
 		if app, ok := s.compiledApps[r.Host]; ok {
+			if len(s.middleware) > 0 {
+				if !s.applyGatewayRequestMiddleware(w, r) {
+					return
+				}
+			} else if !s.authenticateGatewayRequest(w, r) {
+				return
+			}
 			// App matches, route it by L7 paths
 			for _, route := range app.Routes {
 				if strings.HasPrefix(r.URL.Path, route.Config.PathRoute) {
-					// We matched! 
+					// We matched!
 					// Enforce application-specific WAF natively
 					if app.Config.WAF && s.wafEngine != nil {
 						result, err := s.wafEngine.Check(r)
@@ -774,10 +783,10 @@ func (s *Server) GatewayHandler(w http.ResponseWriter, r *http.Request) {
 							return
 						}
 					}
-					
+
 					// Proxy Execute or WebSocket Hijack
 					logging.Logger.Info("App Route Matched", zap.String("app", r.Host), zap.String("route", route.Config.PathRoute))
-					
+
 					if strings.ToLower(r.Header.Get("Connection")) == "upgrade" && strings.ToLower(r.Header.Get("Upgrade")) == "websocket" {
 						// Retrieve assigned UPSTREAM from proxy Director modification loop via a dummy copy
 						target, _ := s.upstreamMgr.GetTarget(route.Config.Upstream)
@@ -786,12 +795,12 @@ func (s *Server) GatewayHandler(w http.ResponseWriter, r *http.Request) {
 							return
 						}
 					}
-					
+
 					route.Proxy.ServeHTTP(w, r)
 					return
 				}
 			}
-			
+
 			// App configured for this Host, but no route handled it -> Block to prevent bleed into default forwards
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
@@ -801,92 +810,96 @@ func (s *Server) GatewayHandler(w http.ResponseWriter, r *http.Request) {
 		// Optimization: Routes are pre-compiled in NewServer.
 		if s.cfg.Features != nil && s.cfg.Features.ReverseProxy {
 			for _, route := range s.compiledRoutes {
-			if strings.HasPrefix(r.URL.Path, route.Path) {
-				
-				var clientIP string
-				if ident, ok := r.Context().Value(browserid.IdentityContextKey).(*browserid.Identity); ok && ident != nil {
-					clientIP = ident.IP
-				} else {
-					clientIP, _, _ = net.SplitHostPort(r.RemoteAddr)
-					if clientIP == "" {
-						clientIP = r.RemoteAddr
-					}
-				}
+				if strings.HasPrefix(r.URL.Path, route.Path) {
 
-				// Check Threat Intel for Reverse Proxy Client
-				if s.threatMgr != nil {
-					if blocked := s.threatMgr.IsBlocked(clientIP); blocked {
-						logging.Logger.Warn("Blocked reverse proxy access from threat IP", zap.String("ip", clientIP))
-						http.Error(w, "Forbidden - IP Blocked", http.StatusForbidden)
-						return
-					}
-				}
-
-				// ML Anomaly Detection tracking
-				if s.anomalyMonitor != nil {
-					s.anomalyMonitor.Track(clientIP)
-				}
-
-				// Gateway Logic: Rate Limit & Auth
-				// 1. Rate Limit (Global for route for now)
-				if s.limiter != nil {
-					if err := s.limiter.WaitN(r.Context(), 1); err != nil {
-						http.Error(w, "Rate Limit Exceeded", http.StatusTooManyRequests)
-						return
-					}
-				}
-
-				// 2. Auth Pipeline (Execute Native Authenticator on Gateway Route)
-				if route.AuthMethod != "" && route.AuthMethod != "none" {
-					if s.authenticator != nil {
-						authenticated, user, challenge, err := s.authenticator.Authenticate(r)
-						if err != nil {
-							logging.Logger.Error("Gateway authentication error", zap.Error(err))
-							http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-							return
-						}
-						if !authenticated {
-							if challenge == "" {
-								challenge, _ = s.authenticator.Challenge(r)
-							}
-							if challenge != "" {
-								w.Header().Set("WWW-Authenticate", challenge)
-								w.Header().Set("Proxy-Authenticate", challenge)
-							}
-							http.Error(w, "Unauthorized", http.StatusUnauthorized)
-							return
-						}
-						// Fast-path user identity propagation to upstream
-						r.Header.Set("X-Authenticated-User", user)
+					var clientIP string
+					if ident, ok := r.Context().Value(browserid.IdentityContextKey).(*browserid.Identity); ok && ident != nil {
+						clientIP = ident.IP
 					} else {
-						// Fallback to basic header existence check if authenticator is somehow nil
-						if r.Header.Get("Authorization") == "" {
-							http.Error(w, "Unauthorized", http.StatusUnauthorized)
+						clientIP, _, _ = net.SplitHostPort(r.RemoteAddr)
+						if clientIP == "" {
+							clientIP = r.RemoteAddr
+						}
+					}
+
+					// Check Threat Intel for Reverse Proxy Client
+					if s.threatMgr != nil {
+						if blocked := s.threatMgr.IsBlocked(clientIP); blocked {
+							logging.Logger.Warn("Blocked reverse proxy access from threat IP", zap.String("ip", clientIP))
+							http.Error(w, "Forbidden - IP Blocked", http.StatusForbidden)
 							return
 						}
 					}
-				}
 
-				logging.Logger.Info("Gateway: Proxying request",
-					zap.String("path", r.URL.Path),
-					zap.String("upstream", route.Upstream.String()))
+					// ML Anomaly Detection tracking
+					if s.anomalyMonitor != nil {
+						s.anomalyMonitor.Track(clientIP)
+					}
 
-				// Update Host header
-				r.Host = route.Upstream.Host
+					// Gateway Logic: Rate Limit & Auth
+					// 1. Rate Limit (Global for route for now)
+					if s.limiter != nil {
+						if err := s.limiter.WaitN(r.Context(), 1); err != nil {
+							http.Error(w, "Rate Limit Exceeded", http.StatusTooManyRequests)
+							return
+						}
+					}
 
-				// Hook WebSocket Support for Legacy Routing
-				if strings.ToLower(r.Header.Get("Connection")) == "upgrade" && strings.ToLower(r.Header.Get("Upgrade")) == "websocket" {
-					HandleWebSocket(w, r, route.Upstream)
+					// 2. Auth Pipeline (Execute Native Authenticator on Gateway Route)
+					if route.AuthMethod != "" && route.AuthMethod != "none" {
+						if s.authenticator != nil {
+							authenticated, user, challenge, err := s.authenticator.Authenticate(r)
+							if err != nil {
+								logging.Logger.Error("Gateway authentication error", zap.Error(err))
+								http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+								return
+							}
+							if !authenticated {
+								if challenge == "" {
+									challenge, _ = s.authenticator.Challenge(r)
+								}
+								if challenge != "" {
+									w.Header().Set("WWW-Authenticate", challenge)
+									w.Header().Set("Proxy-Authenticate", challenge)
+								}
+								http.Error(w, "Unauthorized", http.StatusUnauthorized)
+								return
+							}
+							// Fast-path user identity propagation to upstream
+							r.Header.Set("X-Authenticated-User", user)
+						} else {
+							// Fallback to basic header existence check if authenticator is somehow nil
+							if r.Header.Get("Authorization") == "" {
+								http.Error(w, "Unauthorized", http.StatusUnauthorized)
+								return
+							}
+						}
+					}
+
+					logging.Logger.Info("Gateway: Proxying request",
+						zap.String("path", r.URL.Path),
+						zap.String("upstream", route.Upstream.String()))
+
+					// Update Host header
+					r.Host = route.Upstream.Host
+
+					// Hook WebSocket Support for Legacy Routing
+					if strings.ToLower(r.Header.Get("Connection")) == "upgrade" && strings.ToLower(r.Header.Get("Upgrade")) == "websocket" {
+						HandleWebSocket(w, r, route.Upstream)
+						return
+					}
+
+					route.Proxy.ServeHTTP(w, r)
 					return
 				}
-
-				route.Proxy.ServeHTTP(w, r)
-				return
 			}
-		}
 		}
 
 		// 2. Fallback to Forward Proxy
+		if s.cfg.Features != nil && !s.cfg.Features.ForwardProxy {
+			http.Error(w, "Forward proxy disabled", http.StatusForbidden)
+			return
+		}
 		s.proxy.ServeHTTP(w, r)
 	}
 
@@ -895,6 +908,59 @@ func (s *Server) GatewayHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		handler(w, r)
 	}
+}
+
+func (s *Server) authenticateGatewayRequest(w http.ResponseWriter, r *http.Request) bool {
+	if s.authenticator == nil {
+		http.Error(w, "Proxy authentication unavailable", http.StatusServiceUnavailable)
+		return false
+	}
+	authenticated, user, challenge, err := s.authenticator.Authenticate(r)
+	if err != nil {
+		logging.Logger.Error("Gateway authentication error", zap.Error(err))
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return false
+	}
+	if !authenticated {
+		if challenge == "" {
+			challenge, _ = s.authenticator.Challenge(r)
+		}
+		if challenge != "" {
+			w.Header().Set("Proxy-Authenticate", challenge)
+		}
+		http.Error(w, "Proxy Authentication Required", http.StatusProxyAuthRequired)
+		return false
+	}
+	r.Header.Set("X-Authenticated-User", user)
+	return true
+}
+
+func (s *Server) applyGatewayRequestMiddleware(w http.ResponseWriter, req *http.Request) bool {
+	ctx := &goproxy.ProxyCtx{Req: req}
+	for _, middleware := range s.middleware {
+		updated, response := middleware(req, ctx)
+		if updated != nil {
+			req = updated
+			ctx.Req = updated
+		}
+		if response == nil {
+			continue
+		}
+		for key, values := range response.Header {
+			for _, value := range values {
+				w.Header().Add(key, value)
+			}
+		}
+		w.WriteHeader(response.StatusCode)
+		if response.Body != nil {
+			defer response.Body.Close()
+			if _, err := io.Copy(w, response.Body); err != nil {
+				logging.Logger.Warn("Failed to write gateway middleware response", zap.Error(err))
+			}
+		}
+		return false
+	}
+	return true
 }
 
 func (s *Server) Serve(l net.Listener) error {

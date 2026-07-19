@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/checker/decls"
 	"go.uber.org/zap"
+	"gopkg.in/yaml.v3"
 )
 
 // Policy represents a single access control rule
@@ -101,7 +103,53 @@ func NewEngine() (*Engine, error) {
 	}, nil
 }
 
-// ... LoadFromFile ...
+// LoadFromFile atomically replaces the active policies with policies compiled
+// from a YAML file. The file may contain either a top-level `policies` field or
+// a bare policy list.
+func (e *Engine) LoadFromFile(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read policy file: %w", err)
+	}
+	var document struct {
+		Policies []*Policy `yaml:"policies"`
+	}
+	if err := yaml.Unmarshal(data, &document); err != nil {
+		return fmt.Errorf("parse policy file: %w", err)
+	}
+	policies := document.Policies
+	if policies == nil {
+		if err := yaml.Unmarshal(data, &policies); err != nil {
+			return fmt.Errorf("parse policy list: %w", err)
+		}
+	}
+	compiled := make([]*Policy, 0, len(policies))
+	for index, item := range policies {
+		if item == nil || strings.TrimSpace(item.ID) == "" || strings.TrimSpace(item.Condition) == "" {
+			return fmt.Errorf("policy %d requires id and condition", index)
+		}
+		switch strings.ToLower(item.Effect) {
+		case "allow", "block", "log":
+		default:
+			return fmt.Errorf("policy %q has unsupported effect %q", item.ID, item.Effect)
+		}
+		ast, issues := e.env.Compile(item.Condition)
+		if issues != nil && issues.Err() != nil {
+			return fmt.Errorf("compile policy %q: %w", item.ID, issues.Err())
+		}
+		program, err := e.env.Program(ast)
+		if err != nil {
+			return fmt.Errorf("create policy %q: %w", item.ID, err)
+		}
+		copy := *item
+		copy.Program = program
+		compiled = append(compiled, &copy)
+	}
+	e.mu.Lock()
+	e.policies = compiled
+	e.mu.Unlock()
+	return nil
+}
 
 // Evaluate checks all policies against the context
 // Returns: allowed (bool), matched (bool), actions ([]string), reason (string)

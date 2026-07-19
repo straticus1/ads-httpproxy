@@ -36,22 +36,29 @@ type CachedResponse struct {
 
 // CacheStats tracks cache performance metrics
 type CacheStats struct {
-	L1Hits       uint64
-	L2Hits       uint64
-	Misses       uint64
-	Stores       uint64
-	Errors       uint64
-	BytesSaved   uint64
-	BytesStored  uint64
+	L1Hits      uint64
+	L2Hits      uint64
+	Misses      uint64
+	Stores      uint64
+	Errors      uint64
+	BytesSaved  uint64
+	BytesStored uint64
 }
 
 // HTTPCache manages HTTP response caching
 type HTTPCache struct {
-	redis      *Manager
-	memory     *MemoryCache
-	config     *CacheConfig
-	stats      *CacheStats
+	redis  *Manager
+	memory *MemoryCache
+	config *CacheConfig
+	stats  *CacheStats
 }
+
+type prefixReadCloser struct {
+	io.Reader
+	closer io.Closer
+}
+
+func (r *prefixReadCloser) Close() error { return r.closer.Close() }
 
 // CacheConfig configures HTTP caching behavior
 type CacheConfig struct {
@@ -102,10 +109,10 @@ func DefaultCacheConfig() *CacheConfig {
 		MemoryEnabled:   true,
 		MemoryMaxSizeMB: 500,
 		MemoryMaxTTL:    60 * time.Second,
-		DefaultTTL:      3600 * time.Second, // 1 hour
+		DefaultTTL:      3600 * time.Second,  // 1 hour
 		MaxTTL:          86400 * time.Second, // 24 hours
-		MinSizeBytes:    1024,                 // 1KB
-		MaxSizeBytes:    10 * 1024 * 1024,     // 10MB
+		MinSizeBytes:    1024,                // 1KB
+		MaxSizeBytes:    10 * 1024 * 1024,    // 10MB
 		CompressBody:    true,
 		CachePrivate:    false,
 	}
@@ -169,11 +176,25 @@ func (hc *HTTPCache) Set(req *http.Request, resp *http.Response) error {
 	key := hc.GenerateKey(req)
 	ttl := hc.CalculateTTL(resp)
 
-	// Read response body
-	body, err := io.ReadAll(resp.Body)
+	// Read at most one byte beyond the cache limit. If the response is too
+	// large, put the consumed prefix back in front of the original stream so
+	// downstream clients still receive the complete response without buffering
+	// it all in memory.
+	limit := hc.config.MaxSizeBytes
+	if limit < 0 {
+		limit = 0
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
 		atomic.AddUint64(&hc.stats.Errors, 1)
 		return err
+	}
+	if int64(len(body)) > hc.config.MaxSizeBytes {
+		resp.Body = &prefixReadCloser{
+			Reader: io.MultiReader(bytes.NewReader(body), resp.Body),
+			closer: resp.Body,
+		}
+		return nil
 	}
 	resp.Body.Close()
 

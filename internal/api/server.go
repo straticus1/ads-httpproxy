@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"strings"
 
 	"ads-httpproxy/internal/api/ui"
 	"ads-httpproxy/internal/bandwidth"
@@ -91,7 +92,7 @@ func (s *Server) Start() {
 	go func() {
 		if s.cfg.ApiCert != "" && s.cfg.ApiPrivKey != "" {
 			logging.Logger.Info("Using TLS for Admin API")
-			
+
 			tlsConfig := &tls.Config{}
 			if s.cfg.ApiClientCA != "" {
 				caCert, err := os.ReadFile(s.cfg.ApiClientCA)
@@ -160,21 +161,7 @@ func (s *Server) handleConnections(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
-		// Update config
-		var newCfg config.Config
-		if err := json.NewDecoder(r.Body).Decode(&newCfg); err != nil {
-			http.Error(w, "Invalid config json", http.StatusBadRequest)
-			return
-		}
-
-		// Basic validation & apply (This is a simplified apply, deep dynamic reload is complex)
-		// For now we update the struct which might affect some readers, but restart is often needed for deep changes.
-		// However, simple flags can be toggled.
-		// TODO: Deep validation
-		*s.cfg = newCfg
-
-		logging.Logger.Info("Config updated via API")
-		w.WriteHeader(http.StatusOK)
+		http.Error(w, "live configuration replacement is disabled; validate a configuration file and restart the service", http.StatusNotImplemented)
 		return
 	}
 
@@ -183,8 +170,47 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(s.cfg); err != nil {
+	redacted, err := redactedConfig(s.cfg)
+	if err != nil {
+		http.Error(w, "Failed to redact config", http.StatusInternalServerError)
+		return
+	}
+	if err := json.NewEncoder(w).Encode(redacted); err != nil {
 		logging.Logger.Error("Failed to encode config", zap.Error(err))
+	}
+}
+
+func redactedConfig(cfg *config.Config) (map[string]interface{}, error) {
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		return nil, err
+	}
+	var value map[string]interface{}
+	if err := json.Unmarshal(data, &value); err != nil {
+		return nil, err
+	}
+	redactJSONSecrets(value)
+	return value, nil
+}
+
+func redactJSONSecrets(value map[string]interface{}) {
+	for key, item := range value {
+		lower := strings.ToLower(key)
+		if strings.Contains(lower, "secret") || strings.Contains(lower, "password") ||
+			lower == "api_key" || strings.HasSuffix(lower, "users") || strings.Contains(lower, "privkey") {
+			if entries, ok := item.(map[string]interface{}); ok {
+				for entry := range entries {
+					entries[entry] = "[REDACTED]"
+				}
+				value[key] = entries
+			} else {
+				value[key] = "[REDACTED]"
+			}
+			continue
+		}
+		if nested, ok := item.(map[string]interface{}); ok {
+			redactJSONSecrets(nested)
+		}
 	}
 }
 

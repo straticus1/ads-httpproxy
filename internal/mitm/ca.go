@@ -96,8 +96,8 @@ func Configure(proxy *goproxy.ProxyHttpServer, ca *tls.Certificate) {
 			Action: goproxy.ConnectMitm,
 			TLSConfig: func(host string, ctx *goproxy.ProxyCtx) (*tls.Config, error) {
 				return &tls.Config{
-					InsecureSkipVerify: true, // For upstream - user might want this configurable
-					Certificates:       []tls.Certificate{*ca},
+					MinVersion:   tls.VersionTLS12,
+					Certificates: []tls.Certificate{*ca},
 				}, nil
 			},
 		}, host

@@ -30,7 +30,10 @@ func HandleWebSocket(w http.ResponseWriter, r *http.Request, target *url.URL) {
 	var upConn net.Conn
 	var err error
 	if target.Scheme == "https" || target.Scheme == "wss" {
-		upConn, err = tls.Dial("tcp", targetAddr, &tls.Config{InsecureSkipVerify: true}) // Trust custom domains internally
+		upConn, err = tls.Dial("tcp", targetAddr, &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			ServerName: target.Hostname(),
+		})
 	} else {
 		upConn, err = net.Dial("tcp", targetAddr)
 	}

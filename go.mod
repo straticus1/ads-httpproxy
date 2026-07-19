@@ -37,6 +37,8 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 )
 
+replace github.com/dnsscience/dnsscienced => github.com/straticus1/dnsscienced v0.0.0-20260526090054-af7b9a4536e2
+
 require (
 	cel.dev/expr v0.25.1 // indirect
 	github.com/Azure/go-ntlmssp v0.1.0 // indirect
@@ -102,5 +104,3 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 	rsc.io/binaryregexp v0.2.0 // indirect
 )
-
-replace github.com/dnsscience/dnsscienced => ../dnsscienced

@@ -71,6 +71,9 @@ func main() {
 		if err := cfg.LoadEnv(); err != nil {
 			logging.Logger.Fatal("Failed to load env vars", zap.Error(err))
 		}
+		if err := cfg.Validate(); err != nil {
+			logging.Logger.Fatal("Invalid configuration", zap.Error(err))
+		}
 		logging.Logger.Info("Using default configuration")
 	}
 
@@ -120,18 +123,19 @@ func main() {
 	httpListener = ja3.NewListener(httpListener)
 
 	srv := proxy.NewServer(cfg)
-	socksSrv, err := proxy.NewSocksServer(cfg.SocksAddr, cfg.Auth)
-	if err != nil {
-		logging.Logger.Fatal("Failed to init socks server", zap.Error(err))
+	var socksSrv *proxy.SocksServer
+	var socksListener net.Listener
+	if cfg.SocksAddr != "" {
+		socksSrv, err = proxy.NewSocksServer(cfg.SocksAddr, cfg.Auth)
+		if err != nil {
+			logging.Logger.Fatal("Failed to init socks server", zap.Error(err))
+		}
+		socksListener, err = listen(cfg.SocksAddr)
+		if err != nil {
+			logging.Logger.Fatal("Failed to listen for SOCKS", zap.Error(err))
+		}
+		socksListener = protocol.NewListener(socksListener)
 	}
-
-	// SOCKS Listener
-	socksListener, err := listen(cfg.SocksAddr)
-	if err != nil {
-		logging.Logger.Fatal("Failed to listen for SOCKS", zap.Error(err))
-	}
-	// Wrap SOCKS with Protocol Safeguard too
-	socksListener = protocol.NewListener(socksListener)
 
 	// Run HTTP server
 	go func() {
@@ -141,11 +145,13 @@ func main() {
 	}()
 
 	// Run SOCKS server
-	go func() {
-		if err := socksSrv.Serve(socksListener); err != nil {
-			logging.Logger.Fatal("SOCKS Server failed", zap.Error(err))
-		}
-	}()
+	if socksSrv != nil {
+		go func() {
+			if err := socksSrv.Serve(socksListener); err != nil {
+				logging.Logger.Fatal("SOCKS Server failed", zap.Error(err))
+			}
+		}()
+	}
 
 	// Run RTMP Proxy if configured
 	if cfg.RtmpAddr != "" {
@@ -191,7 +197,9 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	socksSrv.Shutdown()
+	if socksSrv != nil {
+		socksSrv.Shutdown()
+	}
 
 	if err := srv.Shutdown(ctx); err != nil {
 		logging.Logger.Error("Server forced to shutdown", zap.Error(err))

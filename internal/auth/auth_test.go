@@ -6,6 +6,7 @@ import (
 	"ads-httpproxy/internal/config"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
 
@@ -43,8 +44,9 @@ func TestNewAuthenticator(t *testing.T) {
 		cfg := &config.AuthConfig{
 			Mechanism: "none",
 		}
-		auth, err := NewAuthenticator(cfg, logger)
-		assert.NoError(t, err)
-		assert.Nil(t, auth)
+		authenticator, err := NewAuthenticator(cfg, logger)
+		require.NoError(t, err)
+		_, denied := authenticator.(DenyAllAuthenticator)
+		assert.True(t, denied)
 	})
 }

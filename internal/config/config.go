@@ -3,7 +3,6 @@ package config
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -17,64 +16,64 @@ import (
 type FeatureToggles struct {
 	ForwardProxy bool `json:"forward_proxy" yaml:"forward_proxy"`
 	ReverseProxy bool `json:"reverse_proxy" yaml:"reverse_proxy"`
-	BrowserID    bool `json:"browser_id" yaml:"browser_id"`     // Activate edge BrowserID identity integration
-	MASQUE       bool `json:"masque" yaml:"masque"`             // Activate CONNECT-UDP & CONNECT-IP endpoints
+	BrowserID    bool `json:"browser_id" yaml:"browser_id"` // Activate edge BrowserID identity integration
+	MASQUE       bool `json:"masque" yaml:"masque"`         // Activate CONNECT-UDP & CONNECT-IP endpoints
 }
 
 type Config struct {
-	Features        *FeatureToggles           `json:"features" yaml:"features"`
-	Addr            string                    `json:"addr" yaml:"addr"`
-	DataCenter      string                    `json:"data_center" yaml:"data_center"` // For Cluster Sync
-	SocksAddr       string                    `json:"socks_addr" yaml:"socks_addr"`
-	MirrorAddr      string                    `json:"mirror_addr" yaml:"mirror_addr"`
-	CaCert          string                    `json:"ca_cert" yaml:"ca_cert"`
-	CaKey           string                    `json:"ca_key" yaml:"ca_key"`
-	ApiAddr         string                    `json:"api_addr" yaml:"api_addr"`
-	GrpcAddr        string                    `json:"grpc_addr" yaml:"grpc_addr"`
-	ApiSecret       string                    `json:"api_secret" yaml:"api_secret"`
-	ApiCert         string                    `json:"api_cert" yaml:"api_cert"`
-	ApiPrivKey      string                    `json:"api_privkey" yaml:"api_privkey"`
-	ApiUsers        map[string]string         `json:"api_users" yaml:"api_users"`
-	ApiRateLimit    int                       `json:"api_rate_limit" yaml:"api_rate_limit"`
-	ApiClientCA     string                    `json:"api_client_ca" yaml:"api_client_ca"`
-	BandwidthLimit  float64                   `json:"bandwidth_limit" yaml:"bandwidth_limit"` // Bytes per second
+	Features             *FeatureToggles           `json:"features" yaml:"features"`
+	Addr                 string                    `json:"addr" yaml:"addr"`
+	DataCenter           string                    `json:"data_center" yaml:"data_center"` // For Cluster Sync
+	SocksAddr            string                    `json:"socks_addr" yaml:"socks_addr"`
+	MirrorAddr           string                    `json:"mirror_addr" yaml:"mirror_addr"`
+	CaCert               string                    `json:"ca_cert" yaml:"ca_cert"`
+	CaKey                string                    `json:"ca_key" yaml:"ca_key"`
+	ApiAddr              string                    `json:"api_addr" yaml:"api_addr"`
+	GrpcAddr             string                    `json:"grpc_addr" yaml:"grpc_addr"`
+	ApiSecret            string                    `json:"api_secret" yaml:"api_secret"`
+	ApiCert              string                    `json:"api_cert" yaml:"api_cert"`
+	ApiPrivKey           string                    `json:"api_privkey" yaml:"api_privkey"`
+	ApiUsers             map[string]string         `json:"api_users" yaml:"api_users"`
+	ApiRateLimit         int                       `json:"api_rate_limit" yaml:"api_rate_limit"`
+	ApiClientCA          string                    `json:"api_client_ca" yaml:"api_client_ca"`
+	BandwidthLimit       float64                   `json:"bandwidth_limit" yaml:"bandwidth_limit"` // Bytes per second
 	IcapUrls             []string                  `json:"icap_urls" yaml:"icap_urls"`
 	DlpPatterns          []string                  `json:"dlp_patterns" yaml:"dlp_patterns"`
 	DlpReportFile        string                    `json:"dlp_report_file" yaml:"dlp_report_file"`
 	MaxArchiveUnpackSize int                       `json:"max_archive_unpack_size" yaml:"max_archive_unpack_size"`
-	ScriptFile      string                    `json:"script_file" yaml:"script_file"`
-	Auth            *AuthConfig               `json:"auth" yaml:"auth"`
-	RtmpAddr        string                    `json:"rtmp_addr" yaml:"rtmp_addr"`
-	RtmpTarget      string                    `json:"rtmp_target" yaml:"rtmp_target"`
-	RtspAddr        string                    `json:"rtsp_addr" yaml:"rtsp_addr"`
-	RtspTarget      string                    `json:"rtsp_target" yaml:"rtsp_target"`
-	FtpAddr         string                    `json:"ftp_addr" yaml:"ftp_addr"`
-	FtpTarget       string                    `json:"ftp_target" yaml:"ftp_target"`
-	SshAddr         string                    `json:"ssh_addr" yaml:"ssh_addr"`
-	SshTarget       string                    `json:"ssh_target" yaml:"ssh_target"`
-	EnableReusePort bool                      `json:"enable_reuseport" yaml:"enable_reuseport"`
-	EnableQUIC      bool                      `json:"enable_quic" yaml:"enable_quic"`
-	ThreatFile      string                    `json:"threat_file" yaml:"threat_file"`       // Path to blocked IPs/CIDRs
-	ThreatSources   []string                  `json:"threat_sources" yaml:"threat_sources"` // List of URLs to fetch threat feeds from
-	GeoIPDBFile     string                    `json:"geoip_db_file" yaml:"geoip_db_file"`
-	GeoIPAllow      []string                  `json:"geoip_allow" yaml:"geoip_allow"`
-	GeoIPBlock      []string                  `json:"geoip_block" yaml:"geoip_block"`
-	Routes          []RouteConfig             `json:"routes" yaml:"routes"`
-	DNSScience      *DNSScienceConfig         `json:"dns_science" yaml:"dns_science"`
-	DarkAPI         *DarkAPIConfig            `json:"dark_api" yaml:"dark_api"` // New stats reporting
-	Redis           *RedisConfig              `json:"redis" yaml:"redis"`
-	Peering         *PeeringConfig            `json:"peering" yaml:"peering"` // New Distributed Caching
-	Reputation      *ReputationConfig         `json:"reputation" yaml:"reputation"`
-	MultiTenant       *MultiTenantConfig        `json:"multi_tenant" yaml:"multi_tenant"`
-	PolicyFile        string                    `json:"policy_file" yaml:"policy_file"` // Path to CEL policy file
-	AutoCertCacheDir  string                    `json:"autocert_cache_dir" yaml:"autocert_cache_dir"` // Cache directory for AutoCert (Let's encrypt)
-	Apps              map[string]*AppConfig     `json:"apps" yaml:"apps"` // New Virtual Host architecture
-	UpstreamGroups    map[string]*UpstreamGroup `json:"upstream_groups" yaml:"upstream_groups"`
-	Chains          map[string]*ProxyChain    `json:"chains" yaml:"chains"`
-	PAC             *PACConfig                `json:"pac" yaml:"pac"`
-	Plugins         *PluginConfig             `json:"plugins" yaml:"plugins"` // Plugin system configuration
-	Cache           *HTTPCacheConfig          `json:"cache" yaml:"cache"`     // HTTP response caching
-	WAF             *WAFConfig                `json:"waf" yaml:"waf"`         // Web Application Firewall
+	ScriptFile           string                    `json:"script_file" yaml:"script_file"`
+	Auth                 *AuthConfig               `json:"auth" yaml:"auth"`
+	RtmpAddr             string                    `json:"rtmp_addr" yaml:"rtmp_addr"`
+	RtmpTarget           string                    `json:"rtmp_target" yaml:"rtmp_target"`
+	RtspAddr             string                    `json:"rtsp_addr" yaml:"rtsp_addr"`
+	RtspTarget           string                    `json:"rtsp_target" yaml:"rtsp_target"`
+	FtpAddr              string                    `json:"ftp_addr" yaml:"ftp_addr"`
+	FtpTarget            string                    `json:"ftp_target" yaml:"ftp_target"`
+	SshAddr              string                    `json:"ssh_addr" yaml:"ssh_addr"`
+	SshTarget            string                    `json:"ssh_target" yaml:"ssh_target"`
+	EnableReusePort      bool                      `json:"enable_reuseport" yaml:"enable_reuseport"`
+	EnableQUIC           bool                      `json:"enable_quic" yaml:"enable_quic"`
+	ThreatFile           string                    `json:"threat_file" yaml:"threat_file"`       // Path to blocked IPs/CIDRs
+	ThreatSources        []string                  `json:"threat_sources" yaml:"threat_sources"` // List of URLs to fetch threat feeds from
+	GeoIPDBFile          string                    `json:"geoip_db_file" yaml:"geoip_db_file"`
+	GeoIPAllow           []string                  `json:"geoip_allow" yaml:"geoip_allow"`
+	GeoIPBlock           []string                  `json:"geoip_block" yaml:"geoip_block"`
+	Routes               []RouteConfig             `json:"routes" yaml:"routes"`
+	DNSScience           *DNSScienceConfig         `json:"dns_science" yaml:"dns_science"`
+	DarkAPI              *DarkAPIConfig            `json:"dark_api" yaml:"dark_api"` // New stats reporting
+	Redis                *RedisConfig              `json:"redis" yaml:"redis"`
+	Peering              *PeeringConfig            `json:"peering" yaml:"peering"` // New Distributed Caching
+	Reputation           *ReputationConfig         `json:"reputation" yaml:"reputation"`
+	MultiTenant          *MultiTenantConfig        `json:"multi_tenant" yaml:"multi_tenant"`
+	PolicyFile           string                    `json:"policy_file" yaml:"policy_file"`               // Path to CEL policy file
+	AutoCertCacheDir     string                    `json:"autocert_cache_dir" yaml:"autocert_cache_dir"` // Cache directory for AutoCert (Let's encrypt)
+	Apps                 map[string]*AppConfig     `json:"apps" yaml:"apps"`                             // New Virtual Host architecture
+	UpstreamGroups       map[string]*UpstreamGroup `json:"upstream_groups" yaml:"upstream_groups"`
+	Chains               map[string]*ProxyChain    `json:"chains" yaml:"chains"`
+	PAC                  *PACConfig                `json:"pac" yaml:"pac"`
+	Plugins              *PluginConfig             `json:"plugins" yaml:"plugins"` // Plugin system configuration
+	Cache                *HTTPCacheConfig          `json:"cache" yaml:"cache"`     // HTTP response caching
+	WAF                  *WAFConfig                `json:"waf" yaml:"waf"`         // Web Application Firewall
 }
 
 type UpstreamGroup struct {
@@ -95,10 +94,10 @@ type AppConfig struct {
 
 // AppRoute handles granular L7 rewriting and routing instructions
 type AppRoute struct {
-	PathStrip   string `json:"path_strip" yaml:"path_strip"`       // Substring to rip from matched path implicitly (e.g. /api/v1/)
-	PathRoute   string `json:"path_route" yaml:"path_route"`       // Prefix match required to execute this route
-	PathRewrite string `json:"path_rewrite" yaml:"path_rewrite"`   // Explicit rewrite rule
-	Upstream    string `json:"upstream" yaml:"upstream"`           // Maps backwards to the UpstreamGroup map
+	PathStrip   string `json:"path_strip" yaml:"path_strip"`     // Substring to rip from matched path implicitly (e.g. /api/v1/)
+	PathRoute   string `json:"path_route" yaml:"path_route"`     // Prefix match required to execute this route
+	PathRewrite string `json:"path_rewrite" yaml:"path_rewrite"` // Explicit rewrite rule
+	Upstream    string `json:"upstream" yaml:"upstream"`         // Maps backwards to the UpstreamGroup map
 }
 
 type ProxyChain struct {
@@ -111,27 +110,27 @@ type PACConfig struct {
 }
 
 type PluginConfig struct {
-	Enabled    bool     `json:"enabled" yaml:"enabled"`           // Enable plugin system
-	PluginDir  string   `json:"plugin_dir" yaml:"plugin_dir"`     // Directory containing .so plugin files
-	PluginList []string `json:"plugin_list" yaml:"plugin_list"`   // List of specific plugin files to load
-	AutoLoad   bool     `json:"auto_load" yaml:"auto_load"`       // Auto-load all plugins from plugin_dir
+	Enabled    bool     `json:"enabled" yaml:"enabled"`         // Enable plugin system
+	PluginDir  string   `json:"plugin_dir" yaml:"plugin_dir"`   // Directory containing .so plugin files
+	PluginList []string `json:"plugin_list" yaml:"plugin_list"` // List of specific plugin files to load
+	AutoLoad   bool     `json:"auto_load" yaml:"auto_load"`     // Auto-load all plugins from plugin_dir
 }
 
 // HTTPCacheConfig configures HTTP response caching
 type HTTPCacheConfig struct {
-	Enabled     bool              `json:"enabled" yaml:"enabled"`
-	Memory      *MemoryCacheConfig `json:"memory" yaml:"memory"`
-	DefaultTTL  int               `json:"default_ttl" yaml:"default_ttl"`     // Seconds
-	MaxTTL      int               `json:"max_ttl" yaml:"max_ttl"`             // Seconds
-	MinSizeMB   int               `json:"min_size_mb" yaml:"min_size_mb"`     // Minimum response size to cache (MB)
-	MaxSizeMB   int               `json:"max_size_mb" yaml:"max_size_mb"`     // Maximum response size to cache (MB)
+	Enabled    bool               `json:"enabled" yaml:"enabled"`
+	Memory     *MemoryCacheConfig `json:"memory" yaml:"memory"`
+	DefaultTTL int                `json:"default_ttl" yaml:"default_ttl"` // Seconds
+	MaxTTL     int                `json:"max_ttl" yaml:"max_ttl"`         // Seconds
+	MinSizeMB  int                `json:"min_size_mb" yaml:"min_size_mb"` // Minimum response size to cache (MB)
+	MaxSizeMB  int                `json:"max_size_mb" yaml:"max_size_mb"` // Maximum response size to cache (MB)
 }
 
 // MemoryCacheConfig configures L1 in-memory cache
 type MemoryCacheConfig struct {
-	Enabled     bool `json:"enabled" yaml:"enabled"`
-	MaxSizeMB   int  `json:"max_size_mb" yaml:"max_size_mb"`     // Maximum memory cache size in MB
-	MaxTTL      int  `json:"max_ttl" yaml:"max_ttl"`             // Maximum TTL for memory cache (seconds)
+	Enabled   bool `json:"enabled" yaml:"enabled"`
+	MaxSizeMB int  `json:"max_size_mb" yaml:"max_size_mb"` // Maximum memory cache size in MB
+	MaxTTL    int  `json:"max_ttl" yaml:"max_ttl"`         // Maximum TTL for memory cache (seconds)
 }
 
 // WAFConfig configures the production WAF engine (Coraza + OWASP CRS).
@@ -171,23 +170,23 @@ type WAFConfig struct {
 	CustomRulesDir string `json:"custom_rules_dir" yaml:"custom_rules_dir"`
 }
 
-type ReputationConfig struct{
-	Enabled    bool     `json:"enabled" yaml:"enabled"`
-	URL        string   `json:"url" yaml:"url"`         // http://localhost:8080 (Legacy reputation service)
-	Timeout    int      `json:"timeout" yaml:"timeout"` // Milliseconds
-	FailOpen   bool     `json:"fail_open" yaml:"fail_open"`
-	Feeds      *FeedsConfig `json:"feeds" yaml:"feeds"` // URL reputation feeds
+type ReputationConfig struct {
+	Enabled  bool         `json:"enabled" yaml:"enabled"`
+	URL      string       `json:"url" yaml:"url"`         // http://localhost:8080 (Legacy reputation service)
+	Timeout  int          `json:"timeout" yaml:"timeout"` // Milliseconds
+	FailOpen bool         `json:"fail_open" yaml:"fail_open"`
+	Feeds    *FeedsConfig `json:"feeds" yaml:"feeds"` // URL reputation feeds
 }
 
 type FeedsConfig struct {
-	Enabled        bool     `json:"enabled" yaml:"enabled"`
-	UpdateInterval int      `json:"update_interval" yaml:"update_interval"` // Minutes
-	MaxAge         int      `json:"max_age" yaml:"max_age"`                 // Days to keep entries
-	CustomFeeds    []CustomFeed `json:"custom_feeds" yaml:"custom_feeds"`
-	EnableURLhaus  bool     `json:"enable_urlhaus" yaml:"enable_urlhaus"`     // abuse.ch malware URLs
-	EnablePhishTank bool    `json:"enable_phishtank" yaml:"enable_phishtank"` // PhishTank phishing URLs
-	EnableOpenPhish bool    `json:"enable_openphish" yaml:"enable_openphish"` // OpenPhish phishing URLs
-	EnableThreatFox bool    `json:"enable_threatfox" yaml:"enable_threatfox"` // abuse.ch ThreatFox IOCs
+	Enabled         bool         `json:"enabled" yaml:"enabled"`
+	UpdateInterval  int          `json:"update_interval" yaml:"update_interval"` // Minutes
+	MaxAge          int          `json:"max_age" yaml:"max_age"`                 // Days to keep entries
+	CustomFeeds     []CustomFeed `json:"custom_feeds" yaml:"custom_feeds"`
+	EnableURLhaus   bool         `json:"enable_urlhaus" yaml:"enable_urlhaus"`     // abuse.ch malware URLs
+	EnablePhishTank bool         `json:"enable_phishtank" yaml:"enable_phishtank"` // PhishTank phishing URLs
+	EnableOpenPhish bool         `json:"enable_openphish" yaml:"enable_openphish"` // OpenPhish phishing URLs
+	EnableThreatFox bool         `json:"enable_threatfox" yaml:"enable_threatfox"` // abuse.ch ThreatFox IOCs
 }
 
 type CustomFeed struct {
@@ -281,17 +280,17 @@ type SAMLConfig struct {
 }
 
 type LDAPConfig struct {
-	URL                string   `json:"url" yaml:"url"`                                       // ldap://server:389 or ldaps://server:636
-	BaseDN             string   `json:"base_dn" yaml:"base_dn"`                               // Base DN for user search (e.g., dc=example,dc=com)
-	BindDN             string   `json:"bind_dn" yaml:"bind_dn"`                               // Service account DN for binding
-	BindPassword       string   `json:"bind_password" yaml:"bind_password"`                   // Service account password
-	UserAttribute      string   `json:"user_attribute" yaml:"user_attribute"`                 // Attribute to match username (uid, sAMAccountName)
-	UserFilter         string   `json:"user_filter" yaml:"user_filter"`                       // LDAP filter for user search (supports {username} placeholder)
-	RequireGroups      []string `json:"require_groups" yaml:"require_groups"`                 // List of groups user must be member of (CN or full DN)
-	StartTLS           bool     `json:"start_tls" yaml:"start_tls"`                           // Use StartTLS for encryption
-	InsecureSkipVerify bool     `json:"insecure_skip_verify" yaml:"insecure_skip_verify"`     // Skip TLS certificate verification (not recommended)
-	Timeout            int      `json:"timeout" yaml:"timeout"`                               // Connection timeout in seconds
-	Realm              string   `json:"realm" yaml:"realm"`                                   // Authentication realm for Basic Auth challenge
+	URL                string   `json:"url" yaml:"url"`                                   // ldap://server:389 or ldaps://server:636
+	BaseDN             string   `json:"base_dn" yaml:"base_dn"`                           // Base DN for user search (e.g., dc=example,dc=com)
+	BindDN             string   `json:"bind_dn" yaml:"bind_dn"`                           // Service account DN for binding
+	BindPassword       string   `json:"bind_password" yaml:"bind_password"`               // Service account password
+	UserAttribute      string   `json:"user_attribute" yaml:"user_attribute"`             // Attribute to match username (uid, sAMAccountName)
+	UserFilter         string   `json:"user_filter" yaml:"user_filter"`                   // LDAP filter for user search (supports {username} placeholder)
+	RequireGroups      []string `json:"require_groups" yaml:"require_groups"`             // List of groups user must be member of (CN or full DN)
+	StartTLS           bool     `json:"start_tls" yaml:"start_tls"`                       // Use StartTLS for encryption
+	InsecureSkipVerify bool     `json:"insecure_skip_verify" yaml:"insecure_skip_verify"` // Skip TLS certificate verification (not recommended)
+	Timeout            int      `json:"timeout" yaml:"timeout"`                           // Connection timeout in seconds
+	Realm              string   `json:"realm" yaml:"realm"`                               // Authentication realm for Basic Auth challenge
 }
 
 // MultiTenantConfig configures multi-tenancy support
@@ -348,11 +347,11 @@ func NewConfig() *Config {
 			MASQUE:       false,
 		},
 		Addr:       ":8080",
-		SocksAddr:  ":1080",
+		SocksAddr:  "", // Disabled by default; enabling it requires explicit authentication configuration.
 		MirrorAddr: "", // Disabled by default
 		CaCert:     "", // Empty means generate/use default
 		CaKey:      "",
-		ApiAddr:    ":9090",
+		ApiAddr:    "127.0.0.1:9090",
 		ApiSecret:  "changeme",
 		Auth: &AuthConfig{
 			Mechanism: "none",
@@ -627,8 +626,9 @@ func (c *Config) Validate() error {
 		return errors.New("addr is required")
 	}
 
-	if c.ApiSecret == "changeme" {
-		fmt.Fprintln(os.Stderr, "WARNING: api_secret is set to the default value 'changeme' — change this before deploying to production")
+	if !isLoopbackAddress(c.ApiAddr) && c.ApiClientCA == "" && len(c.ApiUsers) == 0 &&
+		(c.ApiSecret == "" || c.ApiSecret == "changeme") {
+		return errors.New("api_secret must be changed before binding the admin API to a non-loopback address")
 	}
 	if c.Auth != nil {
 		// Open-relay prevention: if no auth mechanism is configured the proxy
@@ -690,4 +690,16 @@ func (c *Config) Validate() error {
 		return errors.New("ssh_target is required when ssh_addr is set")
 	}
 	return nil
+}
+
+func isLoopbackAddress(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

@@ -3,6 +3,8 @@ package config
 import (
 	"os"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestLoadConfig(t *testing.T) {
@@ -62,4 +64,24 @@ auth:
 	if err == nil {
 		t.Error("Expected validation error for empty addr, got nil")
 	}
+}
+
+func TestValidateRejectsPublicAdminAPIWithDefaultSecret(t *testing.T) {
+	cfg := NewConfig()
+	cfg.ApiAddr = ":9090"
+	cfg.ApiSecret = "changeme"
+
+	err := cfg.Validate()
+
+	assert.ErrorContains(t, err, "api_secret")
+}
+
+func TestDefaultAdminAPIBindsToLoopback(t *testing.T) {
+	cfg := NewConfig()
+	assert.Equal(t, "127.0.0.1:9090", cfg.ApiAddr)
+}
+
+func TestDefaultConfigDoesNotExposeSOCKS(t *testing.T) {
+	cfg := NewConfig()
+	assert.Empty(t, cfg.SocksAddr)
 }

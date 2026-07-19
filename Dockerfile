@@ -1,5 +1,5 @@
 # Build Stage
-FROM golang:1.24-alpine AS builder
+FROM golang:1.25.2-alpine AS builder
 
 WORKDIR /app
 
@@ -49,8 +49,6 @@ EXPOSE 8080 1080 9090 9091 443/udp
 
 # Default Config
 ENV ADS_ADDR=:8080
-ENV ADS_SOCKS_ADDR=:1080
-ENV ADS_API_ADDR=:9090
 ENV ADS_ENABLE_QUIC=true
 
 ENTRYPOINT ["/usr/local/bin/ads-httpproxy"]
