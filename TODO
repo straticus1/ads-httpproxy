@@ -1,5 +1,8 @@
 # TODO
 
+Completed work is marked only where implemented and verified. Future product ideas
+remain separate from the core implementation backlog. Guides are in `docs/`.
+
 ## High Priority
 
 ### Configuration Management
@@ -10,6 +13,10 @@
 - [x] Support environment variable overrides
 
 ### CRITICAL FIXES NEEDED
+- [x] Sign MITM per-host certificates using the configured CA instead of the built-in/default handler
+- [x] Validate CA certificate/key pairs and certificate-signing usage
+- [x] Verify upstream TLS certificates and enable pooled HTTP/2-capable transports
+- [x] Enforce request middleware and response processing for legacy gateway routes
 - [x] Fix broken import path in internal/proxy/server.go:31 (dnscache)
 - [x] Implement handleHealth function in internal/api/server.go
 - [x] Wire up security components (WAF, DLP, ICAP, Auth) to request pipeline
@@ -20,36 +27,36 @@
 
 ### API Server Integration
 - [x] Complete API server implementation in proxy main
-- [x] Add endpoints for runtime configuration updates
+- [ ] Add endpoints for runtime configuration updates (currently disabled; validate files and restart)
 - [x] Implement plugin management endpoints (load/unload)
 - [x] Add endpoint for traffic statistics (GET /stats)
 - [x] Add endpoint for active connections listing (GET /connections)
 - [x] Add Prometheus metrics endpoint (GET /metrics)
 - [x] Add PAC file serving endpoint (GET /proxy.pac)
-- [x] Add API authentication/authorization (currently open)
+- [x] Add API authentication/authorization (API key or configured Basic users; PAC management protected)
 
 ### Documentation
-- [ ] Add API documentation (OpenAPI/Swagger)
-- [ ] Create plugin development guide
-- [ ] Add scripting examples and cookbook
-- [ ] Document MITM setup and CA certificate installation
-- [ ] Add troubleshooting guide
+- [x] Add API documentation (OpenAPI/Swagger)
+- [x] Create plugin development guide
+- [x] Add scripting examples and cookbook
+- [x] Document MITM setup and CA certificate installation
+- [x] Add troubleshooting guide
 
 ### Testing
-- [ ] Add unit tests for all internal packages
-- [ ] Add integration tests for proxy functionality
-- [ ] Add tests for MITM functionality
-- [ ] Add tests for plugin system
-- [ ] Add benchmarks for performance testing
+- [ ] Add unit tests for all internal packages (CLI, developer toolkit, scripts, PAC, MITM, and plugin coverage added; other packages still need coverage)
+- [x] Add integration tests for proxy functionality
+- [x] Add tests for MITM functionality
+- [x] Add tests for plugin system
+- [x] Add benchmarks for performance testing
 
 ## Medium Priority
 
 ### Plugin System
-- [ ] Define stable plugin interface
-- [ ] Implement plugin hot-reload
-- [ ] Add plugin configuration per-plugin
-- [ ] Create example plugins (logging, auth, filtering)
-- [ ] Add plugin versioning support
+- [x] Define stable plugin interface
+- [x] Implement plugin hot-reload (atomic instance replacement; new code needs a distinct Go plugin package path)
+- [x] Add plugin configuration per-plugin
+- [x] Create example plugins (logging, auth, filtering)
+- [x] Add plugin versioning support
 
 ### Security
 - [x] Implement TLS for management API
@@ -65,7 +72,7 @@
 - [x] Add caching layer for frequently accessed resources
 - [x] Optimize memory usage for high-traffic scenarios
 - [x] Add support for HTTP/2 (via Go's http.Transport default)
-- [x] Add support for HTTP/3 (QUIC support added)
+- [x] Add support for HTTP/3 (TLS listener, explicit upstream routing, and graceful shutdown verified)
 - [x] Implement zero-copy where possible
 
 ### Visibility & Monitoring
@@ -84,10 +91,29 @@
 
 ## Low Priority
 
+### Developer Toolkit & QUIC
+- [x] Add opt-in bounded capture of outbound HTTP traffic
+- [x] Redact captured query values and omit credential headers
+- [x] Add optional bounded text request/response body previews
+- [x] Add authenticated API routes for captures and development rules
+- [x] Add companion `ads-dev` CLI for requests, capture inspection, clearing, and GET/HEAD replay
+- [x] Add mock responses, latency injection, and deterministic failure rules
+- [x] Add direct HTTP/3 probes to the developer CLI
+- [x] Add local decode/encode utilities for UTF-8, Base64/Base64URL, percent/form encoding, hex, HTML, JSON strings, quoted-printable, and gzip/deflate
+- [x] Decode raw HTTP/1 transfer framing, compression layers, and declared charsets
+- [x] Add UTF-16/Latin-1/Windows-1252 conversion and JWT inspection without signature verification
+- [x] Add decoding chains and live response decoding with bounded input/output and malformed-input tests
+- [ ] Add Brotli and Zstandard body decompression
+- [x] Add fixed-target opaque QUIC/UDP relay with bounded client sessions and idle expiry
+- [x] Add end-to-end HTTP/3 gateway/upstream and opaque QUIC relay tests
+- [ ] Add HAR export and richer capture filtering
+- [ ] Add capture coverage for cache hits, pre-transport blocks, and direct HTTP/2 interception
+- [ ] Complete RFC-compliant MASQUE CONNECT-UDP and CONNECT-IP (existing handlers are experimental)
+
 ### Features
-- [ ] Add support for parent proxy chaining
+- [x] Add support for parent proxy chaining (HTTP/HTTPS parent proxy; existing route-specific SOCKS chains)
 - [x] Implement proxy authentication (Basic, Digest, NTLM, Kerberos, OIDC, SAML, Passkeys)
-- [ ] Add support for PAC file serving with dynamic generation
+- [x] Add support for PAC file serving with dynamic generation
 - [x] Implement WebSocket proxying
 - [x] Add support for FTP proxy
 
@@ -99,9 +125,13 @@
 - [x] Support multiple ICAP servers with load balancing
 
 ### Scripting Engine
+- [x] Wire Tengo/Starlark request and response hooks into outbound proxy transports
+- [x] Fix Tengo request variables and isolate per-request execution
+- [x] Preserve valid policies after failed script reloads
+- [x] Support Starlark allow/block dictionaries, header overrides, cancellation, and execution limits
 - [x] Add more built-in functions for scripts
 - [x] Implement script hot-reload
-- [x] Add script debugging support
+- [x] Add script debugging support (debug logging; interactive stepping/breakpoints remain future work)
 - [x] Create script standard library
 - [x] Add support for additional scripting languages (Starlark)
 	
@@ -118,11 +148,14 @@
 - [x] Implement graceful shutdown improvements
 
 ### Admin Tool
-- [ ] Add interactive mode for admin CLI
-- [ ] Implement batch operations
-- [ ] Add support for output formats (JSON, YAML, table)
-- [ ] Create shell completion scripts
-- [ ] Add config file support for admin tool
+
+See `docs/admin-cli.md` for commands, authentication, batch files, and completion.
+
+- [x] Add interactive mode for admin CLI
+- [x] Implement batch operations
+- [x] Add support for output formats (JSON, YAML, table)
+- [x] Create shell completion scripts
+- [x] Add config file support for admin tool
 
 ## Future Considerations
 
@@ -131,6 +164,6 @@
 - [ ] Machine learning based traffic analysis
 - [x] Integration with threat intelligence feeds
 - [ ] Cloud-native deployment options
-- [ ] GUI/Web interface for management
+- [ ] GUI/Web interface for management (read-only traffic dashboard exists at /ui/; full management UI pending)
 - [ ] Mobile app for monitoring
 - [ ] Blockchain-based audit trail

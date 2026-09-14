@@ -2,6 +2,8 @@ package proxy
 
 import (
 	"context"
+	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -17,6 +19,7 @@ import (
 	"ads-httpproxy/internal/browserid"
 	"ads-httpproxy/internal/cache"
 	"ads-httpproxy/internal/config"
+	"ads-httpproxy/internal/devtools"
 	"ads-httpproxy/internal/dlp"
 	"ads-httpproxy/internal/geoip"
 	"ads-httpproxy/internal/icap"
@@ -68,6 +71,12 @@ func (b bufferPoolAdapter) Put(bytes []byte) {
 }
 
 type Server struct {
+	scriptWatcher  io.Closer
+	quicRelay      *UDPRelay
+	devtools       *devtools.Toolkit
+	h3Server       *http3.Server
+	h3Transport    *http3.Transport
+	quicConn       net.PacketConn
 	cfg            *config.Config
 	proxy          *goproxy.ProxyHttpServer
 	pm             *plugin.Manager
@@ -116,7 +125,17 @@ type PreparedRoute struct {
 
 func NewServer(cfg *config.Config) *Server {
 	p := goproxy.NewProxyHttpServer()
+	// goproxy's default transport skips certificate verification. Use Go's
+	// pooled, HTTP/2-capable transport with normal upstream trust instead.
+	p.Tr = http.DefaultTransport.(*http.Transport).Clone()
+	p.Tr.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	p.Verbose = true // Enable verbose logging for now
+	if cfg.ParentProxy != "" {
+		parent, err := url.Parse(cfg.ParentProxy)
+		if err == nil {
+			p.Tr.Proxy = http.ProxyURL(parent)
+		}
+	}
 	// Important for gRPC/Streaming: flush immediately
 	// 0 usually means "default" in some libs, but for goproxy we need to ensure it flushes.
 	// Actually goproxy uses http.Transport which handles it, but let's check if there's a flush setting exposed.
@@ -128,8 +147,11 @@ func NewServer(cfg *config.Config) *Server {
 	// Configure MITM
 	ca, err := mitm.LoadCA(cfg.CaCert, cfg.CaKey)
 	if err != nil {
-		logging.Logger.Error("Failed to load CA, falling back to default", zap.Error(err))
-		ca = &goproxy.GoproxyCa
+		logging.Logger.Error("Failed to load CA; generating an isolated fallback CA", zap.Error(err))
+		ca, err = mitm.GenerateCA()
+		if err != nil {
+			panic(fmt.Errorf("initialize MITM CA: %w", err))
+		}
 	}
 	mitm.Configure(p, ca)
 
@@ -138,6 +160,9 @@ func NewServer(cfg *config.Config) *Server {
 	// Load plugins if configured
 	if cfg.Plugins != nil && cfg.Plugins.Enabled {
 		loader := plugin.NewLoader(pm)
+		if err := loader.SetConfigurations(cfg.Plugins.Configurations); err != nil {
+			logging.Logger.Error("Invalid plugin configuration", zap.Error(err))
+		}
 
 		// Load specific plugins from list
 		if len(cfg.Plugins.PluginList) > 0 {
@@ -448,7 +473,9 @@ func NewServer(cfg *config.Config) *Server {
 		}
 	}
 
+	toolkit := devtools.New(cfg.DevTools)
 	apiServer := api.NewServer(cfg, l, pm)
+	apiServer.SetDevTools(toolkit)
 
 	// Set cache handler if cache is enabled
 	if httpCacheMgr != nil {
@@ -465,6 +492,7 @@ func NewServer(cfg *config.Config) *Server {
 	}
 
 	s := &Server{
+		devtools:       toolkit,
 		cfg:            cfg,
 		proxy:          p,
 		pm:             pm,
@@ -485,6 +513,10 @@ func NewServer(cfg *config.Config) *Server {
 		screenshot:     screenshotSvc,
 		upstreamMgr:    um,
 		anomalyMonitor: ml.NewAnomalyMonitor(),
+	}
+
+	if len(cfg.QUICUpstreams) > 0 {
+		s.h3Transport = &http3.Transport{}
 	}
 
 	if s.peerMgr != nil {
@@ -538,6 +570,8 @@ func NewServer(cfg *config.Config) *Server {
 			}
 			proxy.BufferPool = bufferPoolAdapter{}
 			proxy.FlushInterval = -1
+			proxy.Transport = s.wrapTransport(nil, false)
+			proxy.ModifyResponse = s.processGatewayResponse
 			a.Routes = append(a.Routes, PreparedAppRoute{
 				Config: r,
 				Proxy:  proxy,
@@ -596,6 +630,9 @@ func NewServer(cfg *config.Config) *Server {
 			proxy.FlushInterval = -1
 		}
 
+		proxy.Transport = s.wrapTransport(proxy.Transport, chainName != "")
+		proxy.ModifyResponse = s.processGatewayResponse
+
 		s.compiledRoutes = append(s.compiledRoutes, PreparedRoute{
 			Path:       r.Path,
 			Upstream:   initialTarget, // Stored for metadata/logging
@@ -606,7 +643,7 @@ func NewServer(cfg *config.Config) *Server {
 	}
 
 	// Start Hot-Reload Watcher
-	if cfg.ScriptFile != "" {
+	if cfg.ScriptFile != "" && s.scriptEngine != nil && !strings.HasSuffix(cfg.ScriptFile, ".star") {
 		s.StartHotReloadWatcher(cfg.ScriptFile)
 	}
 
@@ -704,6 +741,9 @@ func NewServer(cfg *config.Config) *Server {
 
 	// Hook Processor
 	p.OnRequest().DoFunc(func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
+		ctx.RoundTripper = goproxy.RoundTripperFunc(func(outgoing *http.Request, _ *goproxy.ProxyCtx) (*http.Response, error) {
+			return s.wrapTransport(p.Tr, false).RoundTrip(outgoing)
+		})
 		// Run Middleware Chain
 		for _, mw := range s.middleware {
 			r, resp := mw(req, ctx)
@@ -811,6 +851,13 @@ func (s *Server) GatewayHandler(w http.ResponseWriter, r *http.Request) {
 		if s.cfg.Features != nil && s.cfg.Features.ReverseProxy {
 			for _, route := range s.compiledRoutes {
 				if strings.HasPrefix(r.URL.Path, route.Path) {
+					if len(s.middleware) > 0 {
+						if !s.applyGatewayRequestMiddleware(w, r) {
+							return
+						}
+					} else if !s.authenticateGatewayRequest(w, r) {
+						return
+					}
 
 					var clientIP string
 					if ident, ok := r.Context().Value(browserid.IdentityContextKey).(*browserid.Identity); ok && ident != nil {
@@ -940,8 +987,10 @@ func (s *Server) applyGatewayRequestMiddleware(w http.ResponseWriter, req *http.
 	for _, middleware := range s.middleware {
 		updated, response := middleware(req, ctx)
 		if updated != nil {
-			req = updated
-			ctx.Req = updated
+			if updated != req {
+				*req = *updated
+			}
+			ctx.Req = req
 		}
 		if response == nil {
 			continue
@@ -966,26 +1015,51 @@ func (s *Server) applyGatewayRequestMiddleware(w http.ResponseWriter, req *http.
 func (s *Server) Serve(l net.Listener) error {
 	logging.Logger.Info("Starting proxy server", zap.String("addr", l.Addr().String()))
 
-	// Start Admin API
-	s.apiServer.Start()
+	// Start a fixed-target relay for opaque QUIC/UDP traffic when configured.
+	if s.cfg.QUICRelay != nil {
+		relayCfg := s.cfg.QUICRelay
+		relay, err := NewUDPRelay(relayCfg.Addr, relayCfg.Target, relayCfg.MaxClients, time.Duration(relayCfg.IdleTimeoutSeconds)*time.Second)
+		if err != nil {
+			return fmt.Errorf("QUIC relay: %w", err)
+		}
+		s.quicRelay = relay
+		go func() {
+			if err := relay.Serve(context.Background()); err != nil {
+				logging.Logger.Error("QUIC relay stopped", zap.Error(err))
+			}
+		}()
+	}
 
 	// Wrap listener for visibility
 	l = visibility.NewTrackedListener(l)
 
-	// Start QUIC Server (HTTP/3) if enabled
+	// Start QUIC synchronously far enough to surface certificate/bind errors.
 	if s.cfg.EnableQUIC {
-		go func() {
-			logging.Logger.Info("Starting QUIC listener (HTTP/3)", zap.String("addr", s.cfg.Addr))
-			// http3.Server listens on UDP
-			h3Server := &http3.Server{
-				Addr:    s.cfg.Addr,
-				Handler: http.HandlerFunc(s.GatewayHandler), // Use Gateway Handler
+		tlsConfig, err := s.quicTLSConfig()
+		if err != nil {
+			if s.quicRelay != nil {
+				_ = s.quicRelay.Close()
 			}
-			if err := h3Server.ListenAndServe(); err != nil {
+			return err
+		}
+		conn, err := net.ListenPacket("udp", l.Addr().String())
+		if err != nil {
+			if s.quicRelay != nil {
+				_ = s.quicRelay.Close()
+			}
+			return fmt.Errorf("QUIC listener: %w", err)
+		}
+		s.quicConn = conn
+		s.h3Server = &http3.Server{TLSConfig: tlsConfig, Handler: http.HandlerFunc(s.GatewayHandler)}
+		go func() {
+			if err := s.h3Server.Serve(conn); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				logging.Logger.Error("QUIC server failed", zap.Error(err))
 			}
 		}()
 	}
+
+	// Start Admin API after proxy listener setup succeeds.
+	s.apiServer.Start()
 
 	// Use GatewayHandler instead of s.proxy directly
 	s.httpServer = &http.Server{
@@ -1007,13 +1081,35 @@ func (s *Server) Serve(l net.Listener) error {
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
+	var errs []error
+	if s.quicRelay != nil {
+		errs = append(errs, s.quicRelay.Close())
+	}
 	if s.peerMgr != nil {
 		s.peerMgr.Shutdown(ctx)
 	}
-	if s.httpServer != nil {
-		return s.httpServer.Shutdown(ctx)
+	if s.upstreamMgr != nil {
+		s.upstreamMgr.Shutdown()
 	}
-	return nil
+	if s.httpServer != nil {
+		errs = append(errs, s.httpServer.Shutdown(ctx))
+	}
+	if s.h3Server != nil {
+		errs = append(errs, s.h3Server.Shutdown(ctx))
+	}
+	if s.quicConn != nil {
+		errs = append(errs, s.quicConn.Close())
+	}
+	if s.h3Transport != nil {
+		errs = append(errs, s.h3Transport.Close())
+	}
+	if s.scriptWatcher != nil {
+		errs = append(errs, s.scriptWatcher.Close())
+	}
+	if s.scriptEngine != nil {
+		errs = append(errs, s.scriptEngine.Close())
+	}
+	return errors.Join(errs...)
 }
 
 // autocertHostPolicy defines which domains the proxy is allowed to request ACME certificates for.

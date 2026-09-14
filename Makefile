@@ -3,6 +3,7 @@
 BINARY_NAME=ads-httpproxy
 ADMIN_BINARY=ads-admin
 MIGRATION_BINARY=squid2ads
+DEV_BINARY=ads-dev
 BUILD_DIR=bin
 
 .PHONY: all build clean test run docker
@@ -15,6 +16,7 @@ build:
 	go build -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/proxy
 	@echo "Building $(ADMIN_BINARY)..."
 	go build -o $(BUILD_DIR)/$(ADMIN_BINARY) ./cmd/ads-admin
+	go build -o $(BUILD_DIR)/$(DEV_BINARY) ./cmd/ads-dev
 	@echo "Building $(MIGRATION_BINARY)..."
 	go build -o $(BUILD_DIR)/$(MIGRATION_BINARY) ./cmd/squid2ads
 

@@ -1,8 +1,13 @@
 package plugin
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	pluginpkg "plugin"
+	"strings"
 
 	"ads-httpproxy/pkg/logging"
 
@@ -11,7 +16,8 @@ import (
 
 // Loader handles loading plugins from shared libraries (.so files)
 type Loader struct {
-	manager *Manager
+	manager        *Manager
+	configurations map[string]json.RawMessage
 }
 
 func NewLoader(manager *Manager) *Loader {
@@ -20,9 +26,28 @@ func NewLoader(manager *Manager) *Loader {
 	}
 }
 
+func (l *Loader) SetConfigurations(configurations map[string]any) error {
+	values := make(map[string]json.RawMessage, len(configurations))
+	for name, value := range configurations {
+		data, err := json.Marshal(value)
+		if err != nil {
+			return fmt.Errorf("configuration for %s: %w", name, err)
+		}
+		values[name] = data
+	}
+	l.configurations = values
+	return nil
+}
+
 // LoadFromFile loads a plugin from a .so file
 // The .so file must export a "NewPlugin" function that returns a Plugin interface
-func (l *Loader) LoadFromFile(path string) error {
+func (l *Loader) LoadFromFile(path string) error { return l.loadFromFile(path, false) }
+
+// ReloadFromFile replaces an existing plugin only after loading and configuration succeed.
+// Go caches shared libraries; new code requires a distinct plugin package path.
+func (l *Loader) ReloadFromFile(path string) error { return l.loadFromFile(path, true) }
+
+func (l *Loader) loadFromFile(path string, replace bool) error {
 	// Load the plugin shared object
 	p, err := pluginpkg.Open(path)
 	if err != nil {
@@ -44,8 +69,31 @@ func (l *Loader) LoadFromFile(path string) error {
 	// Create plugin instance
 	plugin := newPlugin()
 
+	if err := validatePlugin(plugin); err != nil {
+		return fmt.Errorf("plugin %s: %w", path, err)
+	}
+	if versioned, ok := plugin.(interface{ APIVersion() string }); ok && versioned.APIVersion() != "1" {
+		return fmt.Errorf("plugin %s uses unsupported API version %s", path, versioned.APIVersion())
+	}
+	if settings, ok := l.configurations[plugin.Name()]; ok {
+		configurable, ok := plugin.(interface{ Configure(json.RawMessage) error })
+		if !ok {
+			return fmt.Errorf("plugin %s does not support configuration", plugin.Name())
+		}
+		if err := configurable.Configure(append(json.RawMessage(nil), settings...)); err != nil {
+			return fmt.Errorf("configure plugin %s: %w", plugin.Name(), err)
+		}
+	}
 	// Register with manager
-	l.manager.Register(plugin)
+	var registerErr error
+	if replace {
+		registerErr = l.manager.Replace(plugin)
+	} else {
+		registerErr = l.manager.Register(plugin)
+	}
+	if registerErr != nil {
+		return registerErr
+	}
 
 	logging.Logger.Info("Loaded plugin from file",
 		zap.String("path", path),
@@ -56,11 +104,20 @@ func (l *Loader) LoadFromFile(path string) error {
 
 // LoadFromDirectory loads all plugins from a directory
 func (l *Loader) LoadFromDirectory(dir string) error {
-	// This would scan directory for .so files and load each one
-	// Implementation depends on how you want to structure plugin distribution
-	logging.Logger.Info("Plugin directory loading not yet implemented",
-		zap.String("directory", dir))
-	return nil
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("read plugin directory: %w", err)
+	}
+	var errs []error
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() || !strings.HasSuffix(entry.Name(), ".so") {
+			continue
+		}
+		if err := l.LoadFromFile(filepath.Join(dir, entry.Name())); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // Example of how to build a plugin .so file:
@@ -71,7 +128,7 @@ func (l *Loader) LoadFromDirectory(dir string) error {
 //
 // import (
 //     "net/http"
-//     "ads-httpproxy/internal/plugin"
+//     "ads-httpproxy/pkg/plugin"
 // )
 //
 // type MyPlugin struct{}

@@ -19,6 +19,8 @@ RUN go build -o /bin/ads-httpproxy ./cmd/proxy
 # Build Admin Tool
 RUN go build -o /bin/ads-admin ./cmd/ads-admin
 
+RUN go build -o /bin/ads-dev ./cmd/ads-dev
+
 # Build Migration Tool
 RUN go build -o /bin/squid2ads ./cmd/squid2ads
 
@@ -33,6 +35,7 @@ RUN apk add --no-cache ca-certificates tzdata
 # Copy binaries
 COPY --from=builder /bin/ads-httpproxy /usr/local/bin/
 COPY --from=builder /bin/ads-admin /usr/local/bin/
+COPY --from=builder /bin/ads-dev /usr/local/bin/
 COPY --from=builder /bin/squid2ads /usr/local/bin/
 
 # Create non-root user
@@ -49,6 +52,7 @@ EXPOSE 8080 1080 9090 9091 443/udp
 
 # Default Config
 ENV ADS_ADDR=:8080
-ENV ADS_ENABLE_QUIC=true
+# Enable QUIC only after configuring a server certificate.
+ENV ADS_ENABLE_QUIC=false
 
 ENTRYPOINT ["/usr/local/bin/ads-httpproxy"]

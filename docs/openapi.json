@@ -1,0 +1,864 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "ADS HTTP Proxy Management API",
+    "version": "1.0.0",
+    "description": "API keys and configured Basic users are alternatives. Public health/metrics/PAC/dashboard routes are unauthenticated. Optional cache and developer routes return 404 when not mounted. Error bodies are plain text. Configuration mutation is disabled."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:9090"
+    }
+  ],
+  "security": [
+    {
+      "apiKey": []
+    },
+    {
+      "basicAuth": []
+    }
+  ],
+  "paths": {
+    "/healthz": {
+      "get": {
+        "summary": "API liveness",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed"
+          }
+        },
+        "security": []
+      }
+    },
+    "/stats": {
+      "get": {
+        "summary": "Traffic statistics",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "401": {
+            "description": "API key or Basic credentials required"
+          },
+          "429": {
+            "description": "Rate limiter rejected request"
+          }
+        }
+      }
+    },
+    "/connections": {
+      "get": {
+        "summary": "Active connections",
+        "responses": {
+          "200": {
+            "description": "Active connections",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "401": {
+            "description": "API key or Basic credentials required"
+          },
+          "429": {
+            "description": "Rate limiter rejected request"
+          }
+        }
+      }
+    },
+    "/config": {
+      "get": {
+        "summary": "Read redacted proxy configuration",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "401": {
+            "description": "API key or Basic credentials required"
+          },
+          "429": {
+            "description": "Rate limiter rejected request"
+          }
+        }
+      },
+      "post": {
+        "summary": "Live config replacement is disabled",
+        "responses": {
+          "501": {
+            "description": "Validate a configuration file and restart the service"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/plugins": {
+      "get": {
+        "summary": "List registered plugin names",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "401": {
+            "description": "API key or Basic credentials required"
+          },
+          "429": {
+            "description": "Rate limiter rejected request"
+          }
+        }
+      }
+    },
+    "/plugins/load": {
+      "post": {
+        "summary": "Load and configure a shared plugin",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "401": {
+            "description": "API key or Basic credentials required"
+          },
+          "429": {
+            "description": "Rate limiter rejected request"
+          },
+          "400": {
+            "description": "Invalid request"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "path"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/plugins/reload": {
+      "post": {
+        "summary": "Atomically replace a registered plugin using a shared library",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "401": {
+            "description": "API key or Basic credentials required"
+          },
+          "429": {
+            "description": "Rate limiter rejected request"
+          },
+          "400": {
+            "description": "Invalid request"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "path"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/plugins/unload": {
+      "post": {
+        "summary": "Remove a plugin from request processing",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "401": {
+            "description": "API key or Basic credentials required"
+          },
+          "429": {
+            "description": "Rate limiter rejected request"
+          },
+          "400": {
+            "description": "Invalid request"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/devtools/exchanges": {
+      "get": {
+        "summary": "List completed in-memory captures; requires devtools.enabled",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "401": {
+            "description": "API key or Basic credentials required"
+          },
+          "429": {
+            "description": "Rate limiter rejected request"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Clear in-memory captures",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "401": {
+            "description": "API key or Basic credentials required"
+          },
+          "429": {
+            "description": "Rate limiter rejected request"
+          }
+        }
+      }
+    },
+    "/api/devtools/rules": {
+      "get": {
+        "summary": "Read development rules; requires devtools.enabled",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "401": {
+            "description": "API key or Basic credentials required"
+          },
+          "429": {
+            "description": "Rate limiter rejected request"
+          }
+        }
+      },
+      "put": {
+        "summary": "Validate and atomically replace development rules",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "401": {
+            "description": "API key or Basic credentials required"
+          },
+          "429": {
+            "description": "Rate limiter rejected request"
+          },
+          "400": {
+            "description": "Invalid request"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "rules": {
+                    "type": "array",
+                    "maxItems": 100,
+                    "items": {
+                      "$ref": "#/components/schemas/DevelopmentRule"
+                    }
+                  }
+                },
+                "required": [
+                  "rules"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cache/stats": {
+      "get": {
+        "summary": "Read cache statistics; route mounted only with cache handler",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "401": {
+            "description": "API key or Basic credentials required"
+          },
+          "429": {
+            "description": "Rate limiter rejected request"
+          }
+        }
+      }
+    },
+    "/api/cache/purge": {
+      "delete": {
+        "summary": "Purge one cached URL",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "401": {
+            "description": "API key or Basic credentials required"
+          },
+          "429": {
+            "description": "Rate limiter rejected request"
+          }
+        },
+        "parameters": [
+          {
+            "name": "url",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/cache/all": {
+      "delete": {
+        "summary": "Purge all cached URLs",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "401": {
+            "description": "API key or Basic credentials required"
+          },
+          "429": {
+            "description": "Rate limiter rejected request"
+          }
+        }
+      }
+    },
+    "/api/cache/health": {
+      "get": {
+        "summary": "Cache health; route mounted only with cache handler",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed"
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/pac/policy": {
+      "get": {
+        "summary": "Read all or selected user/tenant PAC policies",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "401": {
+            "description": "API key or Basic credentials required"
+          },
+          "429": {
+            "description": "Rate limiter rejected request"
+          }
+        },
+        "parameters": [
+          {
+            "name": "user",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Select a user or tenant; DELETE requires one selector"
+          },
+          {
+            "name": "tenant",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Select a user or tenant; DELETE requires one selector"
+          }
+        ]
+      },
+      "post": {
+        "summary": "Set user or tenant PAC policy",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "401": {
+            "description": "API key or Basic credentials required"
+          },
+          "429": {
+            "description": "Rate limiter rejected request"
+          },
+          "400": {
+            "description": "Invalid request"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "user_id": {
+                    "type": "string"
+                  },
+                  "tenant_id": {
+                    "type": "string"
+                  },
+                  "policy": {
+                    "$ref": "#/components/schemas/PACPolicy"
+                  }
+                },
+                "required": [
+                  "policy"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a user or tenant PAC policy",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "401": {
+            "description": "API key or Basic credentials required"
+          },
+          "429": {
+            "description": "Rate limiter rejected request"
+          }
+        },
+        "parameters": [
+          {
+            "name": "user",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Select a user or tenant; DELETE requires one selector"
+          },
+          {
+            "name": "tenant",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Select a user or tenant; DELETE requires one selector"
+          }
+        ]
+      }
+    },
+    "/proxy.pac": {
+      "get": {
+        "summary": "Dynamically generate proxy auto-configuration",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/x-ns-proxy-autoconfig": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed"
+          }
+        },
+        "security": [],
+        "parameters": [
+          {
+            "name": "user",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tenant",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/metrics": {
+      "get": {
+        "summary": "Prometheus metrics",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed"
+          }
+        },
+        "security": []
+      }
+    },
+    "/ui/": {
+      "get": {
+        "summary": "Read-only traffic dashboard",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed"
+          }
+        },
+        "security": []
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "apiKey": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key"
+      },
+      "basicAuth": {
+        "type": "http",
+        "scheme": "basic"
+      }
+    },
+    "schemas": {
+      "DevelopmentRule": {
+        "type": "object",
+        "properties": {
+          "host": {
+            "type": "string"
+          },
+          "path_prefix": {
+            "type": "string"
+          },
+          "method": {
+            "type": "string"
+          },
+          "delay_ms": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 60000
+          },
+          "fail": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "integer",
+            "minimum": 200,
+            "maximum": 599
+          },
+          "body": {
+            "type": "string",
+            "maxLength": 65536
+          },
+          "headers": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "required": [
+          "host"
+        ]
+      },
+      "PACPolicy": {
+        "type": "object",
+        "description": "Policy fields use the exported Go field names (for example ProxyAddr, ProxyPort, BypassDomains). PAC routing alone does not enforce server-side blocking.",
+        "properties": {
+          "ProxyAddr": {
+            "type": "string"
+          },
+          "ProxyPort": {
+            "type": "integer"
+          },
+          "BypassDomains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "BypassNetworks": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "BlockedDomains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "BlockAdult": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  }
+}

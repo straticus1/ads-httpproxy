@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"fmt"
 	"math/big"
 	"time"
 
@@ -54,8 +55,11 @@ func GenerateCA() (*tls.Certificate, error) {
 // LoadCA loads the CA certificate and key from files.
 // If files are empty, a unique self-signed CA is generated for this instance.
 func LoadCA(certFile, keyFile string) (*tls.Certificate, error) {
-	if certFile == "" || keyFile == "" {
+	if certFile == "" && keyFile == "" {
 		return GenerateCA()
+	}
+	if certFile == "" || keyFile == "" {
+		return nil, fmt.Errorf("CA certificate and key must be provided together")
 	}
 
 	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
@@ -71,35 +75,15 @@ func LoadCA(certFile, keyFile string) (*tls.Certificate, error) {
 		}
 	}
 
+	if cert.Leaf == nil || !cert.Leaf.IsCA || cert.Leaf.KeyUsage&x509.KeyUsageCertSign == 0 {
+		return nil, fmt.Errorf("certificate must be a CA with certificate signing usage")
+	}
 	return &cert, nil
 }
 
-// fallbackCA returns the built-in goproxy CA as a last resort.
-func fallbackCA() *tls.Certificate {
-	return &goproxy.GoproxyCa
-}
-
-// Configure applies the CA and MITM settings to the proxy
+// Configure signs per-host certificates with the configured CA.
 func Configure(proxy *goproxy.ProxyHttpServer, ca *tls.Certificate) {
-	proxy.OnRequest().HandleConnect(goproxy.AlwaysMitm)
-
-	// Set the CA for signing
-	// goproxy uses a global goproxy.GoproxyCa, but we can override the Action's execution
-	// or properly we should set the MItM Connect handlers.
-	// Actually goproxy.MitmConnect returns a ConnectAction that does MITM. Only need to set CA if not default.
-
-	// Unfortuantely goproxy global CA is messy.
-	// Better approach:
-
 	proxy.OnRequest().HandleConnectFunc(func(host string, ctx *goproxy.ProxyCtx) (*goproxy.ConnectAction, string) {
-		return &goproxy.ConnectAction{
-			Action: goproxy.ConnectMitm,
-			TLSConfig: func(host string, ctx *goproxy.ProxyCtx) (*tls.Config, error) {
-				return &tls.Config{
-					MinVersion:   tls.VersionTLS12,
-					Certificates: []tls.Certificate{*ca},
-				}, nil
-			},
-		}, host
+		return &goproxy.ConnectAction{Action: goproxy.ConnectMitm, TLSConfig: goproxy.TLSConfigFromCA(ca)}, host
 	})
 }

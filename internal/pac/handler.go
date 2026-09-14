@@ -3,7 +3,9 @@ package pac
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"strconv"
 	"sync"
 
 	"ads-httpproxy/pkg/logging"
@@ -22,13 +24,23 @@ type Handler struct {
 
 // NewHandler creates a new PAC handler
 func NewHandler(defaultProxy string) *Handler {
+	host, port := defaultProxy, 8080
+	if h, p, err := net.SplitHostPort(defaultProxy); err == nil {
+		host = h
+		if number, err := strconv.Atoi(p); err == nil {
+			port = number
+		}
+	}
+	if host == "0.0.0.0" || host == "::" {
+		host = ""
+	}
 	return &Handler{
-		generator:      NewGenerator(defaultProxy),
+		generator:      NewGenerator(host),
 		policies:       make(map[string]*Policy),
 		tenantPolicies: make(map[string]*Policy),
 		defaultPolicy: &Policy{
-			ProxyAddr: defaultProxy,
-			ProxyPort: 8080,
+			ProxyAddr: host,
+			ProxyPort: port,
 			// Default: no blocking, just route through proxy
 		},
 	}
@@ -38,7 +50,12 @@ func NewHandler(defaultProxy string) *Handler {
 func (h *Handler) SetUserPolicy(userID string, policy *Policy) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.policies[userID] = policy
+	if policy == nil {
+		delete(h.policies, userID)
+		return
+	}
+	copy := clonePolicy(policy)
+	h.policies[userID] = copy
 	logging.Logger.Info("Set user policy", zap.String("user", userID))
 }
 
@@ -46,7 +63,11 @@ func (h *Handler) SetUserPolicy(userID string, policy *Policy) {
 func (h *Handler) SetTenantPolicy(tenantID string, policy *Policy) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.tenantPolicies[tenantID] = policy
+	if policy == nil {
+		delete(h.tenantPolicies, tenantID)
+		return
+	}
+	h.tenantPolicies[tenantID] = clonePolicy(policy)
 	logging.Logger.Info("Set tenant policy", zap.String("tenant", tenantID))
 }
 
@@ -73,6 +94,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Get policy
 	policy := h.getPolicyForUser(userID, tenantID)
+	if policy.ProxyAddr == "" {
+		host := r.Host
+		if value, _, err := net.SplitHostPort(host); err == nil {
+			host = value
+		}
+		policy.ProxyAddr = host
+	}
 
 	// Generate PAC file
 	pac, err := h.generator.Generate(policy)
@@ -104,22 +132,21 @@ func (h *Handler) getPolicyForUser(userID, tenantID string) *Policy {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
-	// Check for user-specific policy
-	if userID != "" {
-		if policy, ok := h.policies[userID]; ok {
-			return policy
-		}
-	}
-
-	// Check for tenant policy
+	base := h.defaultPolicy
 	if tenantID != "" {
 		if policy, ok := h.tenantPolicies[tenantID]; ok {
-			return policy
+			base = policy
 		}
 	}
-
-	// Return default
-	return h.defaultPolicy
+	result := clonePolicy(base)
+	if userID != "" {
+		if policy, ok := h.policies[userID]; ok {
+			result = h.generator.mergePolicies(result, policy)
+		}
+	}
+	result.UserID = userID
+	result.TenantID = tenantID
+	return result
 }
 
 // HandleAPI provides REST API for policy management
@@ -343,4 +370,30 @@ func (h *Handler) GenerateWPAD(domain string) string {
 [DEFAULT]
 Proxy=http://proxy.%s/proxy.pac
 `, domain, domain)
+}
+
+func clonePolicy(policy *Policy) *Policy {
+	if policy == nil {
+		return &Policy{}
+	}
+	result := *policy
+	result.BackupProxies = append([]string(nil), policy.BackupProxies...)
+	result.BypassDomains = append([]string(nil), policy.BypassDomains...)
+	result.BypassNetworks = append([]string(nil), policy.BypassNetworks...)
+	result.DirectDomains = append([]string(nil), policy.DirectDomains...)
+	result.BlockedDomains = append([]string(nil), policy.BlockedDomains...)
+	result.BlockedKeywords = append([]string(nil), policy.BlockedKeywords...)
+	result.AllowedDomains = append([]string(nil), policy.AllowedDomains...)
+	result.RegionalProxies = make(map[string]string, len(policy.RegionalProxies))
+	for key, value := range policy.RegionalProxies {
+		result.RegionalProxies[key] = value
+	}
+	return &result
+}
+
+// SetDefaultPolicy sets the base policy used when there is no tenant policy.
+func (h *Handler) SetDefaultPolicy(policy *Policy) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.defaultPolicy = clonePolicy(policy)
 }

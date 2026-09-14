@@ -4,10 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"ads-httpproxy/internal/devtools"
+	"ads-httpproxy/internal/mitm"
 
 	"gopkg.in/yaml.v3"
 )
@@ -20,7 +24,20 @@ type FeatureToggles struct {
 	MASQUE       bool `json:"masque" yaml:"masque"`         // Activate CONNECT-UDP & CONNECT-IP endpoints
 }
 
+type QUICRelayConfig struct {
+	Addr               string `json:"addr" yaml:"addr"`
+	Target             string `json:"target" yaml:"target"`
+	MaxClients         int    `json:"max_clients" yaml:"max_clients"`
+	IdleTimeoutSeconds int    `json:"idle_timeout_seconds" yaml:"idle_timeout_seconds"`
+}
+
 type Config struct {
+	ParentProxy          string                    `json:"parent_proxy" yaml:"parent_proxy"`
+	QUICRelay            *QUICRelayConfig          `json:"quic_relay" yaml:"quic_relay"`
+	DevTools             *devtools.Config          `json:"devtools" yaml:"devtools"`
+	QUICCert             string                    `json:"quic_cert" yaml:"quic_cert"`
+	QUICKey              string                    `json:"quic_key" yaml:"quic_key"`
+	QUICUpstreams        []string                  `json:"quic_upstreams" yaml:"quic_upstreams"`
 	Features             *FeatureToggles           `json:"features" yaml:"features"`
 	Addr                 string                    `json:"addr" yaml:"addr"`
 	DataCenter           string                    `json:"data_center" yaml:"data_center"` // For Cluster Sync
@@ -105,15 +122,17 @@ type ProxyChain struct {
 }
 
 type PACConfig struct {
+	ProxyHost      string   `json:"proxy_host" yaml:"proxy_host"`
 	BypassDomains  []string `json:"bypass_domains" yaml:"bypass_domains"`
 	BypassNetworks []string `json:"bypass_networks" yaml:"bypass_networks"`
 }
 
 type PluginConfig struct {
-	Enabled    bool     `json:"enabled" yaml:"enabled"`         // Enable plugin system
-	PluginDir  string   `json:"plugin_dir" yaml:"plugin_dir"`   // Directory containing .so plugin files
-	PluginList []string `json:"plugin_list" yaml:"plugin_list"` // List of specific plugin files to load
-	AutoLoad   bool     `json:"auto_load" yaml:"auto_load"`     // Auto-load all plugins from plugin_dir
+	Configurations map[string]any `json:"configurations" yaml:"configurations"`
+	Enabled        bool           `json:"enabled" yaml:"enabled"`         // Enable plugin system
+	PluginDir      string         `json:"plugin_dir" yaml:"plugin_dir"`   // Directory containing .so plugin files
+	PluginList     []string       `json:"plugin_list" yaml:"plugin_list"` // List of specific plugin files to load
+	AutoLoad       bool           `json:"auto_load" yaml:"auto_load"`     // Auto-load all plugins from plugin_dir
 }
 
 // HTTPCacheConfig configures HTTP response caching
@@ -508,6 +527,18 @@ func (c *Config) LoadEnv() error {
 	if v := os.Getenv("ADS_ENABLE_QUIC"); v == "true" {
 		c.EnableQUIC = true
 	}
+	if v := os.Getenv("ADS_PARENT_PROXY"); v != "" {
+		c.ParentProxy = v
+	}
+	if v := os.Getenv("ADS_QUIC_CERT"); v != "" {
+		c.QUICCert = v
+	}
+	if v := os.Getenv("ADS_QUIC_KEY"); v != "" {
+		c.QUICKey = v
+	}
+	if v := os.Getenv("ADS_QUIC_UPSTREAMS"); v != "" {
+		c.QUICUpstreams = strings.Split(v, ",")
+	}
 	if v := os.Getenv("ADS_THREAT_FILE"); v != "" {
 		c.ThreatFile = v
 	}
@@ -622,6 +653,60 @@ func (c *Config) LoadEnv() error {
 
 // Validate checks configuration for errors
 func (c *Config) Validate() error {
+	if (c.CaCert == "") != (c.CaKey == "") {
+		return errors.New("ca_cert and ca_key must be configured together")
+	}
+	if c.CaCert != "" {
+		if _, err := mitm.LoadCA(c.CaCert, c.CaKey); err != nil {
+			return err
+		}
+	}
+
+	if c.ParentProxy != "" {
+		u, err := url.Parse(c.ParentProxy)
+		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+			return errors.New("parent_proxy must be an HTTP or HTTPS proxy URL")
+		}
+		if len(c.QUICUpstreams) > 0 {
+			return errors.New("QUIC upstream connections cannot use an HTTP parent proxy")
+		}
+	}
+
+	if c.QUICRelay != nil {
+		if _, _, err := net.SplitHostPort(c.QUICRelay.Addr); err != nil {
+			return errors.New("quic_relay.addr requires host:port")
+		}
+		host, port, err := net.SplitHostPort(c.QUICRelay.Target)
+		if err != nil || host == "" {
+			return errors.New("quic_relay.target requires host:port")
+		}
+		number, err := strconv.Atoi(port)
+		if err != nil || number < 1 || number > 65535 {
+			return errors.New("quic_relay.target requires a valid port")
+		}
+		if c.QUICRelay.MaxClients < 0 || c.QUICRelay.MaxClients > 10000 {
+			return errors.New("quic_relay.max_clients must be between 0 and 10000")
+		}
+		if c.QUICRelay.IdleTimeoutSeconds < 0 || c.QUICRelay.IdleTimeoutSeconds > 600 {
+			return errors.New("quic_relay.idle_timeout_seconds must be between 0 and 600")
+		}
+	}
+
+	if err := devtools.Validate(c.DevTools); err != nil {
+		return err
+	}
+	if (c.QUICCert == "") != (c.QUICKey == "") {
+		return errors.New("quic_cert and quic_key must be configured together")
+	}
+	if c.EnableQUIC && c.QUICCert == "" && c.AutoCertCacheDir == "" {
+		return errors.New("enable_quic requires quic_cert and quic_key, or autocert_cache_dir")
+	}
+	for _, host := range c.QUICUpstreams {
+		if host == "" || strings.ContainsAny(host, "/ \r\n") {
+			return errors.New("quic_upstreams requires host or host:port authorities")
+		}
+	}
+
 	if c.Addr == "" {
 		return errors.New("addr is required")
 	}

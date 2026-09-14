@@ -2,6 +2,7 @@ package pac
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"net"
 	"strings"
@@ -16,8 +17,8 @@ type Policy struct {
 	Department string
 
 	// Proxy settings
-	ProxyAddr  string   // Proxy server address
-	ProxyPort  int      // Proxy port
+	ProxyAddr     string   // Proxy server address
+	ProxyPort     int      // Proxy port
 	BackupProxies []string // Fallback proxies
 
 	// Bypass rules (don't use proxy)
@@ -35,7 +36,7 @@ type Policy struct {
 	BlockAds       bool
 
 	// Custom block lists
-	BlockedDomains []string
+	BlockedDomains  []string
 	BlockedKeywords []string
 
 	// Allowed overrides (whitelist)
@@ -47,7 +48,7 @@ type Policy struct {
 	WorkHoursEnd   int  // 17 = 5 PM
 
 	// Geographic routing
-	UseGeoRouting bool
+	UseGeoRouting   bool
 	RegionalProxies map[string]string // Country code -> proxy
 
 	// Authentication
@@ -72,6 +73,14 @@ func NewGenerator(defaultProxy string) *Generator {
 
 // Generate creates a PAC file for the given policy
 func (g *Generator) Generate(policy *Policy) (string, error) {
+	if policy == nil {
+		return "", fmt.Errorf("PAC policy is required")
+	}
+	copy := *policy
+	policy = &copy
+	policy.UserID = strings.NewReplacer("\r", "\\r", "\n", "\\n").Replace(policy.UserID)
+	policy.TenantID = strings.NewReplacer("\r", "\\r", "\n", "\\n").Replace(policy.TenantID)
+	policy.Department = strings.NewReplacer("\r", "\\r", "\n", "\\n").Replace(policy.Department)
 	// Default proxy if not set
 	if policy.ProxyAddr == "" {
 		policy.ProxyAddr = g.DefaultProxy
@@ -80,8 +89,17 @@ func (g *Generator) Generate(policy *Policy) (string, error) {
 		policy.ProxyPort = 8080
 	}
 
+	if policy.ProxyPort < 1 || policy.ProxyPort > 65535 {
+		return "", fmt.Errorf("invalid PAC proxy port")
+	}
+	if policy.ProxyAddr == "" || strings.ContainsAny(policy.ProxyAddr, "; \r\n") {
+		return "", fmt.Errorf("invalid PAC proxy host")
+	}
 	data := struct {
 		Policy          *Policy
+		NetworkList     string
+		KeywordList     string
+		ProxyLiteral    string
 		ProxyString     string
 		BackupString    string
 		BypassList      string
@@ -91,7 +109,7 @@ func (g *Generator) Generate(policy *Policy) (string, error) {
 		BlockCategories map[string]bool
 	}{
 		Policy:      policy,
-		ProxyString: fmt.Sprintf("PROXY %s:%d", policy.ProxyAddr, policy.ProxyPort),
+		ProxyString: fmt.Sprintf("PROXY %s", net.JoinHostPort(policy.ProxyAddr, fmt.Sprint(policy.ProxyPort))),
 		BlockCategories: map[string]bool{
 			"adult":     policy.BlockAdult,
 			"gambling":  policy.BlockGambling,
@@ -107,6 +125,20 @@ func (g *Generator) Generate(policy *Policy) (string, error) {
 	if len(policy.BackupProxies) > 0 {
 		data.BackupString = "; " + strings.Join(policy.BackupProxies, "; ")
 	}
+
+	networks := make([]map[string]string, 0, len(policy.BypassNetworks))
+	for _, cidr := range policy.BypassNetworks {
+		_, network, err := net.ParseCIDR(cidr)
+		if err != nil || network.IP.To4() == nil {
+			return "", fmt.Errorf("PAC bypass network requires an IPv4 CIDR: %s", cidr)
+		}
+		networks = append(networks, map[string]string{"network": network.IP.String(), "mask": net.IP(network.Mask).String()})
+	}
+	networkJSON, _ := json.Marshal(networks)
+	data.NetworkList = string(networkJSON)
+	data.KeywordList = g.buildDomainList(policy.BlockedKeywords)
+	literal, _ := json.Marshal(data.ProxyString + data.BackupString)
+	data.ProxyLiteral = string(literal)
 
 	// Build bypass lists
 	data.BypassList = g.buildDomainList(policy.BypassDomains)
@@ -132,7 +164,14 @@ func (g *Generator) GenerateForUser(userID string, tenantPolicy *Policy, userOve
 
 // mergePolicies combines tenant and user policies
 func (g *Generator) mergePolicies(tenant, user *Policy) *Policy {
+	if tenant == nil {
+		tenant = &Policy{}
+	}
 	result := *tenant // Copy tenant policy
+	result.BypassDomains = append([]string(nil), tenant.BypassDomains...)
+	result.DirectDomains = append([]string(nil), tenant.DirectDomains...)
+	result.AllowedDomains = append([]string(nil), tenant.AllowedDomains...)
+	result.BlockedDomains = append([]string(nil), tenant.BlockedDomains...)
 
 	if user == nil {
 		return &result
@@ -170,11 +209,8 @@ func (g *Generator) buildDomainList(domains []string) string {
 		return "[]"
 	}
 
-	quoted := make([]string, len(domains))
-	for i, d := range domains {
-		quoted[i] = fmt.Sprintf(`"%s"`, d)
-	}
-	return "[" + strings.Join(quoted, ", ") + "]"
+	data, _ := json.Marshal(domains)
+	return string(data)
 }
 
 // IsPrivateNetwork checks if an IP is in private address space
@@ -210,6 +246,11 @@ const pacTemplate = `// Proxy Auto-Configuration (PAC) File
 // Generated for: {{.Policy.UserID}}{{if .Policy.TenantID}} (Tenant: {{.Policy.TenantID}}){{end}}
 // Policy: {{if .Policy.Department}}{{.Policy.Department}}{{else}}Default{{end}}
 
+function domainMatches(host, domain) {
+    domain = domain.toLowerCase().replace(/^\*\./, "").replace(/^\./, "");
+    return host === domain || dnsDomainIs(host, "." + domain);
+}
+
 function FindProxyForURL(url, host) {
     // Normalize
     var lhost = host.toLowerCase();
@@ -228,15 +269,26 @@ function FindProxyForURL(url, host) {
         return "DIRECT";
     }
 
+    var bypassNetworks = {{.NetworkList}};
+    if (bypassNetworks.length > 0) {
+        var resolved = dnsResolve(host);
+        if (resolved) {
+            for (var i = 0; i < bypassNetworks.length; i++) {
+                if (isInNet(resolved, bypassNetworks[i].network, bypassNetworks[i].mask)) {
+                    return "DIRECT";
+                }
+            }
+        }
+    }
+
     // ================================================================
     // WHITELIST (Always allow, even if blocked by category)
     // ================================================================
 
     var allowedDomains = {{.AllowedList}};
     for (var i = 0; i < allowedDomains.length; i++) {
-        if (dnsDomainIs(host, allowedDomains[i]) ||
-            shExpMatch(host, "*." + allowedDomains[i])) {
-            return "{{.ProxyString}}{{.BackupString}}";
+        if (domainMatches(lhost, allowedDomains[i])) {
+            return {{.ProxyLiteral}};
         }
     }
 
@@ -246,10 +298,16 @@ function FindProxyForURL(url, host) {
 
     var blockedDomains = {{.BlockedList}};
     for (var i = 0; i < blockedDomains.length; i++) {
-        if (dnsDomainIs(host, blockedDomains[i]) ||
-            shExpMatch(host, "*." + blockedDomains[i])) {
+        if (domainMatches(lhost, blockedDomains[i])) {
             // Return proxy so it can block with proper error message
-            return "{{.ProxyString}}{{.BackupString}}";
+            return {{.ProxyLiteral}};
+        }
+    }
+
+    var blockedKeywords = {{.KeywordList}};
+    for (var i = 0; i < blockedKeywords.length; i++) {
+        if (lurl.indexOf(blockedKeywords[i].toLowerCase()) !== -1) {
+            return {{.ProxyLiteral}};
         }
     }
 
@@ -270,7 +328,7 @@ function FindProxyForURL(url, host) {
         shExpMatch(lurl, "*/adult/*") ||
         shExpMatch(lurl, "*/porn/*") ||
         shExpMatch(lurl, "*/xxx/*")) {
-        return "{{.ProxyString}}{{.BackupString}}"; // Proxy will block
+        return {{.ProxyLiteral}}; // Proxy will block
     }
     {{end}}
 
@@ -284,7 +342,7 @@ function FindProxyForURL(url, host) {
         shExpMatch(lhost, "*draftkings*") ||
         shExpMatch(lurl, "*/casino/*") ||
         shExpMatch(lurl, "*/gambling/*")) {
-        return "{{.ProxyString}}{{.BackupString}}";
+        return {{.ProxyLiteral}};
     }
     {{end}}
 
@@ -301,7 +359,7 @@ function FindProxyForURL(url, host) {
         shExpMatch(host, "*.instagram.com") ||
         shExpMatch(host, "*.twitter.com") ||
         shExpMatch(host, "*.tiktok.com")) {
-        return "{{.ProxyString}}{{.BackupString}}";
+        return {{.ProxyLiteral}};
     }
     {{end}}
 
@@ -316,7 +374,7 @@ function FindProxyForURL(url, host) {
         shExpMatch(host, "*.netflix.com") ||
         shExpMatch(host, "*.hulu.com") ||
         shExpMatch(host, "*.twitch.tv")) {
-        return "{{.ProxyString}}{{.BackupString}}";
+        return {{.ProxyLiteral}};
     }
     {{end}}
 
@@ -328,7 +386,7 @@ function FindProxyForURL(url, host) {
         shExpMatch(lhost, "*1337x*") ||
         shExpMatch(lurl, "*.torrent") ||
         shExpMatch(lurl, "*magnet:*")) {
-        return "{{.ProxyString}}{{.BackupString}}";
+        return {{.ProxyLiteral}};
     }
     {{end}}
 
@@ -338,7 +396,7 @@ function FindProxyForURL(url, host) {
         shExpMatch(lhost, "*crypto-loot*") ||
         shExpMatch(lhost, "*jsecoin*") ||
         shExpMatch(lurl, "*/crypto*mine*")) {
-        return "{{.ProxyString}}{{.BackupString}}";
+        return {{.ProxyLiteral}};
     }
     {{end}}
 
@@ -350,7 +408,7 @@ function FindProxyForURL(url, host) {
         shExpMatch(lhost, "*.ads.*") ||
         shExpMatch(lhost, "*analytics*") ||
         shExpMatch(lhost, "*tracking*")) {
-        return "{{.ProxyString}}{{.BackupString}}";
+        return {{.ProxyLiteral}};
     }
     {{end}}
 
@@ -360,16 +418,14 @@ function FindProxyForURL(url, host) {
 
     var bypassDomains = {{.BypassList}};
     for (var i = 0; i < bypassDomains.length; i++) {
-        if (dnsDomainIs(host, bypassDomains[i]) ||
-            shExpMatch(host, "*." + bypassDomains[i])) {
+        if (domainMatches(lhost, bypassDomains[i])) {
             return "DIRECT";
         }
     }
 
     var directDomains = {{.DirectList}};
     for (var i = 0; i < directDomains.length; i++) {
-        if (dnsDomainIs(host, directDomains[i]) ||
-            shExpMatch(host, "*." + directDomains[i])) {
+        if (domainMatches(lhost, directDomains[i])) {
             return "DIRECT";
         }
     }
@@ -391,7 +447,7 @@ function FindProxyForURL(url, host) {
             shExpMatch(lhost, "*facebook*") ||
             shExpMatch(lhost, "*twitter*") ||
             shExpMatch(lhost, "*instagram*")) {
-            return "{{.ProxyString}}{{.BackupString}}";
+            return {{.ProxyLiteral}};
         }
     }
     {{end}}
@@ -400,20 +456,7 @@ function FindProxyForURL(url, host) {
     // DEFAULT (Route through proxy for security scanning)
     // ================================================================
 
-    return "{{.ProxyString}}{{.BackupString}}";
+    return {{.ProxyLiteral}};
 }
 
-// Helper function to check if client IP is in range
-function isInNetEx(ipaddr, cidr) {
-    var parts = cidr.split('/');
-    var network = parts[0];
-    var bits = parseInt(parts[1]);
-
-    if (bits === 32) {
-        return ipaddr === network;
-    }
-
-    // Simplified CIDR check
-    return isInNet(ipaddr, network, "255.255.255.0");
-}
 `

@@ -6,11 +6,8 @@ import (
 	"net/http"
 	"sync"
 
-	"ads-httpproxy/pkg/logging"
-
 	"github.com/d5/tengo/v2"
 	"github.com/d5/tengo/v2/stdlib"
-	"go.uber.org/zap"
 )
 
 type TengoEngine struct {
@@ -43,12 +40,15 @@ func (e *TengoEngine) Reload() error {
 	script := tengo.NewScript(content)
 	script.SetImports(stdlib.GetModuleMap(stdlib.AllModuleNames()...))
 
-	// Pre-define variables to ensure compilation passes if script uses them
-	// Actually, Tengo requires variables to be defined in scope or passed.
-	// We will assume the script expects 'req' or 'resp' to be defined.
-	// Compilation might fail if we don't declare them?
-	// No, Embedder can add them at runtime, but compilation checks variable existence.
-	// For now, we just compile.
+	if err := script.Add("req", map[string]interface{}{}); err != nil {
+		return err
+	}
+	if err := script.Add("resp", map[string]interface{}{}); err != nil {
+		return err
+	}
+	if err := script.Add("phase", "request"); err != nil {
+		return err
+	}
 
 	compiled, err := script.Compile()
 	if err != nil {
@@ -58,52 +58,43 @@ func (e *TengoEngine) Reload() error {
 	return nil
 }
 
-func (e *TengoEngine) OnRequest(ctx context.Context, req *http.Request) error {
+func (e *TengoEngine) execute(ctx context.Context, phase string, req *http.Request, resp *http.Response) error {
 	e.mu.RLock()
 	compiled := e.compiled
 	e.mu.RUnlock()
-
 	if compiled == nil {
-		return nil // No script loaded
+		return nil
 	}
-
-	// Prepare data
-	reqMap := map[string]interface{}{
-		"method": req.Method,
-		"url":    req.URL.String(),
-		"host":   req.Host,
-		"remote": req.RemoteAddr,
-	}
-
-	if err := compiled.RunContext(ctx); err != nil {
-		logging.Logger.Error("Script run failed", zap.Error(err))
-		return nil // Don't block on script error?
-	}
-
-	// Ideally we pass 'req' as a variable.
-	// compiled.Run() runs the compiled bytecode. We need to set variables.
-	// Tengo Compiled object is reusable but not concurrent safe for setting variables if cloned?
-	// We need to clone it.
-
 	executable := compiled.Clone()
-	executable.Set("req", reqMap)
-
+	reqMap := map[string]interface{}{"method": "", "url": "", "host": "", "remote": ""}
+	if req != nil {
+		reqMap = map[string]interface{}{"method": req.Method, "url": req.URL.String(), "host": req.Host, "remote": req.RemoteAddr}
+	}
+	respMap := map[string]interface{}{"status_code": 0}
+	if resp != nil {
+		respMap["status_code"] = resp.StatusCode
+	}
+	for name, value := range map[string]interface{}{"req": reqMap, "resp": respMap, "phase": phase} {
+		if err := executable.Set(name, value); err != nil {
+			return err
+		}
+	}
 	if err := executable.RunContext(ctx); err != nil {
-		logging.Logger.Error("Script execution failed", zap.Error(err))
-		return err // Or return nil
+		return err
 	}
-
-	// Check results?
-	// E.g. check if script set "block" variable.
 	if block := executable.Get("block"); block != nil && block.Bool() {
-		return context.Canceled // or custom error
+		return context.Canceled
 	}
-
 	return nil
 }
-
+func (e *TengoEngine) OnRequest(ctx context.Context, req *http.Request) error {
+	return e.execute(ctx, "request", req, nil)
+}
 func (e *TengoEngine) OnResponse(ctx context.Context, resp *http.Response) error {
-	return nil
+	if resp == nil {
+		return nil
+	}
+	return e.execute(ctx, "response", resp.Request, resp)
 }
 
 func (e *TengoEngine) Close() error {

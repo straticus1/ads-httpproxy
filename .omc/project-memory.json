@@ -1,0 +1,201 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1789416662986,
+  "projectRoot": "/Users/ryan/development/ads-httpproxy",
+  "techStack": {
+    "languages": [
+      {
+        "name": "Go",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "go.mod"
+        ]
+      },
+      {
+        "name": "C/C++",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "Makefile"
+        ]
+      }
+    ],
+    "frameworks": [],
+    "packageManager": "go",
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": "make build",
+    "testCommand": "make test",
+    "lintCommand": null,
+    "devCommand": null,
+    "scripts": {}
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "examples"
+    ],
+    "gitBranches": {
+      "defaultBranch": "main",
+      "branchingStrategy": null
+    }
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "api": {
+      "path": "api",
+      "purpose": "API routes",
+      "fileCount": 0,
+      "lastAccessed": 1789416662918,
+      "keyFiles": []
+    },
+    "cmd": {
+      "path": "cmd",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1789416662919,
+      "keyFiles": []
+    },
+    "config": {
+      "path": "config",
+      "purpose": "Configuration files",
+      "fileCount": 0,
+      "lastAccessed": 1789416662922,
+      "keyFiles": []
+    },
+    "configs": {
+      "path": "configs",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1789416662923,
+      "keyFiles": []
+    },
+    "deploy": {
+      "path": "deploy",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1789416662925,
+      "keyFiles": []
+    },
+    "docker": {
+      "path": "docker",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1789416662926,
+      "keyFiles": [
+        "prometheus.yml"
+      ]
+    },
+    "examples": {
+      "path": "examples",
+      "purpose": "Example code",
+      "fileCount": 10,
+      "lastAccessed": 1789416662927,
+      "keyFiles": [
+        "config-cache.yaml",
+        "config-comprehensive-blocking.yaml",
+        "config-ldap-auth.yaml",
+        "config-multitenant.yaml",
+        "config-plugins.yaml"
+      ]
+    },
+    "httpav": {
+      "path": "httpav",
+      "purpose": null,
+      "fileCount": 5,
+      "lastAccessed": 1789416662928,
+      "keyFiles": [
+        "README.md",
+        "c-icap.conf",
+        "clamav_mod.conf",
+        "config-icap.yaml",
+        "docker-compose.yaml"
+      ]
+    },
+    "internal": {
+      "path": "internal",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1789416662929,
+      "keyFiles": []
+    },
+    "pkg": {
+      "path": "pkg",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1789416662930,
+      "keyFiles": []
+    },
+    "systemd": {
+      "path": "systemd",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1789416662930,
+      "keyFiles": [
+        "ads-httpproxy.service"
+      ]
+    },
+    "tenants": {
+      "path": "tenants",
+      "purpose": null,
+      "fileCount": 3,
+      "lastAccessed": 1789416662931,
+      "keyFiles": [
+        "acme-corp.yaml",
+        "default.yaml",
+        "startup-inc.yaml"
+      ]
+    },
+    "test_output": {
+      "path": "test_output",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1789416662932,
+      "keyFiles": [
+        "config.yaml",
+        "policy.star"
+      ]
+    },
+    "tuning": {
+      "path": "tuning",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1789416662933,
+      "keyFiles": [
+        "tune_system.sh"
+      ]
+    },
+    "internal/api": {
+      "path": "internal/api",
+      "purpose": "API routes",
+      "fileCount": 4,
+      "lastAccessed": 1789416662937,
+      "keyFiles": [
+        "auth.go",
+        "cache.go",
+        "server.go"
+      ]
+    },
+    "internal/config": {
+      "path": "internal/config",
+      "purpose": "Configuration files",
+      "fileCount": 2,
+      "lastAccessed": 1789416662938,
+      "keyFiles": [
+        "config.go",
+        "config_test.go"
+      ]
+    }
+  },
+  "hotPaths": [],
+  "userDirectives": []
+}

@@ -2,10 +2,7 @@ package proxy
 
 import (
 	"path/filepath"
-	"strings"
 
-	"ads-httpproxy/internal/scripting/starlark"
-	"ads-httpproxy/internal/scripting/tengo"
 	"ads-httpproxy/pkg/logging"
 
 	"github.com/fsnotify/fsnotify"
@@ -20,6 +17,13 @@ func (s *Server) StartHotReloadWatcher(scriptPath string) {
 		return
 	}
 
+	dir := filepath.Dir(scriptPath)
+	if err := watcher.Add(dir); err != nil {
+		watcher.Close()
+		logging.Logger.Error("Failed to watch script directory", zap.Error(err))
+		return
+	}
+	s.scriptWatcher = watcher
 	go func() {
 		defer watcher.Close()
 		for {
@@ -28,7 +32,7 @@ func (s *Server) StartHotReloadWatcher(scriptPath string) {
 				if !ok {
 					return
 				}
-				if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {
+				if (event.Has(fsnotify.Write) || event.Has(fsnotify.Create)) && filepath.Clean(event.Name) == filepath.Clean(scriptPath) {
 					logging.Logger.Info("Script file modified, reloading...", zap.String("file", scriptPath))
 					s.reloadScript(scriptPath)
 				}
@@ -41,24 +45,14 @@ func (s *Server) StartHotReloadWatcher(scriptPath string) {
 		}
 	}()
 
-	// Watch the directory of the file, because editors often rename/swap files
-	dir := filepath.Dir(scriptPath)
-	if err := watcher.Add(dir); err != nil {
-		logging.Logger.Error("Failed to watch script directory", zap.Error(err))
-	} else {
-		logging.Logger.Info("Hot-reload watcher started", zap.String("dir", dir))
-	}
 }
 
 func (s *Server) reloadScript(path string) {
-	var err error
-	if strings.HasSuffix(path, ".star") {
-		s.scriptEngine, err = starlark.NewEngine(path, s.threatMgr)
-	} else {
-		s.scriptEngine, err = tengo.NewEngine(path)
+	reloader, ok := s.scriptEngine.(interface{ Reload() error })
+	if !ok {
+		return
 	}
-
-	if err != nil {
+	if err := reloader.Reload(); err != nil {
 		logging.Logger.Error("Failed to reload script engine", zap.Error(err))
 	} else {
 		logging.Logger.Info("Script engine reloaded successfully")

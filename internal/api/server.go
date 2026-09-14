@@ -4,13 +4,16 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 
 	"ads-httpproxy/internal/api/ui"
 	"ads-httpproxy/internal/bandwidth"
 	"ads-httpproxy/internal/config"
+	"ads-httpproxy/internal/devtools"
 	"ads-httpproxy/internal/pac"
 	"ads-httpproxy/internal/plugin"
 	"ads-httpproxy/internal/visibility"
@@ -22,6 +25,7 @@ import (
 
 // Server represents the Admin API server.
 type Server struct {
+	devtools     *devtools.Toolkit
 	cfg          *config.Config
 	limiter      bandwidth.Limiter
 	apiLimiter   bandwidth.Limiter
@@ -49,9 +53,16 @@ func (s *Server) SetCacheHandler(handler *CacheHandler) {
 	s.cacheHandler = handler
 }
 
-// Start runs the API server in a background goroutine.
-func (s *Server) Start() {
+func (s *Server) SetDevTools(toolkit *devtools.Toolkit) { s.devtools = toolkit }
+
+// Handler builds the management routes with their authentication and rate limits.
+func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	if s.devtools != nil {
+		mux.HandleFunc("/api/devtools/exchanges", s.rateLimitMiddleware(s.authMiddleware(s.devtools.HandleExchanges)))
+		mux.HandleFunc("/api/devtools/rules", s.rateLimitMiddleware(s.authMiddleware(s.devtools.HandleRules)))
+	}
+
 	mux.HandleFunc("/stats", s.rateLimitMiddleware(s.authMiddleware(s.handleStats)))
 	mux.HandleFunc("/connections", s.rateLimitMiddleware(s.authMiddleware(s.handleConnections)))
 	mux.HandleFunc("/config", s.rateLimitMiddleware(s.authMiddleware(s.handleConfig)))
@@ -61,6 +72,7 @@ func (s *Server) Start() {
 	// Plugin endpoints
 	mux.HandleFunc("/plugins", s.rateLimitMiddleware(s.authMiddleware(s.handlePluginsList)))
 	mux.HandleFunc("/plugins/load", s.rateLimitMiddleware(s.authMiddleware(s.handlePluginsLoad)))
+	mux.HandleFunc("/plugins/reload", s.rateLimitMiddleware(s.authMiddleware(s.handlePluginsReload)))
 	mux.HandleFunc("/plugins/unload", s.rateLimitMiddleware(s.authMiddleware(s.handlePluginsUnload)))
 
 	// Cache API endpoints
@@ -86,8 +98,29 @@ func (s *Server) Start() {
 
 	pacHandler := pac.NewHandler(s.cfg.Addr)
 	mux.Handle("/proxy.pac", pacHandler)
-	mux.Handle("/api/pac/policy", http.HandlerFunc(pacHandler.HandleAPI))
+	if s.cfg.PAC != nil {
+		host, portString, err := net.SplitHostPort(s.cfg.Addr)
+		port, _ := strconv.Atoi(portString)
+		if err != nil {
+			host = s.cfg.Addr
+			port = 8080
+		}
+		if host == "0.0.0.0" || host == "::" {
+			host = ""
+		}
+		if s.cfg.PAC.ProxyHost != "" {
+			host = s.cfg.PAC.ProxyHost
+		}
+		pacHandler.SetDefaultPolicy(&pac.Policy{ProxyAddr: host, ProxyPort: port, BypassDomains: s.cfg.PAC.BypassDomains, BypassNetworks: s.cfg.PAC.BypassNetworks})
+	}
+	mux.HandleFunc("/api/pac/policy", s.rateLimitMiddleware(s.authMiddleware(pacHandler.HandleAPI)))
 
+	return mux
+}
+
+// Start runs the API server in a background goroutine.
+func (s *Server) Start() {
+	mux := s.Handler()
 	logging.Logger.Info("Starting Admin API", zap.String("addr", s.cfg.ApiAddr))
 	go func() {
 		if s.cfg.ApiCert != "" && s.cfg.ApiPrivKey != "" {
@@ -197,7 +230,7 @@ func redactJSONSecrets(value map[string]interface{}) {
 	for key, item := range value {
 		lower := strings.ToLower(key)
 		if strings.Contains(lower, "secret") || strings.Contains(lower, "password") ||
-			lower == "api_key" || strings.HasSuffix(lower, "users") || strings.Contains(lower, "privkey") {
+			lower == "api_key" || lower == "parent_proxy" || strings.HasSuffix(lower, "users") || strings.Contains(lower, "privkey") {
 			if entries, ok := item.(map[string]interface{}); ok {
 				for entry := range entries {
 					entries[entry] = "[REDACTED]"
@@ -282,7 +315,11 @@ func (s *Server) handlePluginsList(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"plugins": plugins})
 }
 
-func (s *Server) handlePluginsLoad(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handlePluginsLoad(w http.ResponseWriter, r *http.Request) { s.loadPlugin(w, r, false) }
+func (s *Server) handlePluginsReload(w http.ResponseWriter, r *http.Request) {
+	s.loadPlugin(w, r, true)
+}
+func (s *Server) loadPlugin(w http.ResponseWriter, r *http.Request, replace bool) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -301,13 +338,30 @@ func (s *Server) handlePluginsLoad(w http.ResponseWriter, r *http.Request) {
 	}
 
 	loader := plugin.NewLoader(s.pluginMgr)
-	if err := loader.LoadFromFile(req.Path); err != nil {
+	if s.cfg.Plugins != nil {
+		if err := loader.SetConfigurations(s.cfg.Plugins.Configurations); err != nil {
+			http.Error(w, "Invalid plugin configuration", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	var err error
+	if replace {
+		err = loader.ReloadFromFile(req.Path)
+	} else {
+		err = loader.LoadFromFile(req.Path)
+	}
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status":"loaded"}`))
+	if replace {
+		w.Write([]byte(`{"status":"reloaded"}`))
+	} else {
+		w.Write([]byte(`{"status":"loaded"}`))
+	}
 }
 
 func (s *Server) handlePluginsUnload(w http.ResponseWriter, r *http.Request) {

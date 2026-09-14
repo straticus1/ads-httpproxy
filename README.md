@@ -6,7 +6,9 @@ Enterprise-grade HTTP/HTTPS/SOCKS5 proxy server with advanced security features,
 
 ### Core Proxy Capabilities
 - **Multi-Protocol Support**: HTTP/1.1, HTTP/2, HTTP/3 (QUIC), SOCKS5
-- **MASQUE Protocol**: RFC 9298 CONNECT-UDP and RFC 9484 CONNECT-IP tunneling
+- **QUIC proxying**: HTTP/3 gateway termination, explicit HTTP/3 upstream routing, and opaque fixed-target QUIC/UDP relay
+- **Developer toolkit**: Bounded traffic inspection, replay CLI, mock responses, and latency/failure rules
+- **MASQUE Protocol**: Experimental handlers; RFC CONNECT-UDP/CONNECT-IP conformance is incomplete
 - **MITM Capabilities**: SSL/TLS interception with custom CA certificate
 - **Dual Mode**: Forward proxy + API Gateway (reverse proxy with routing)
 - **Traffic Mirroring**: Duplicate traffic to secondary destinations for monitoring
@@ -138,7 +140,7 @@ grpc_addr: ":9091"               # gRPC API
 
 # Performance
 enable_reuseport: true           # SO_REUSEPORT for multi-process
-enable_quic: true                # Enable HTTP/3
+enable_quic: false               # Enable HTTP/3 after setting quic_cert and quic_key
 bandwidth_limit: 10485760        # Bytes/sec per connection
 
 # Security
@@ -189,6 +191,8 @@ export ADS_FEATURE_MASQUE="true"       # Enable MASQUE protocol
 # Network
 export ADS_ADDR=":8080"
 export ADS_ENABLE_QUIC="true"
+export ADS_QUIC_CERT="/etc/ads/gateway.crt"
+export ADS_QUIC_KEY="/etc/ads/gateway.key"
 
 # Security
 export ADS_THREAT_FILE="/etc/threats.txt"
@@ -207,6 +211,8 @@ export ADS_REDIS_ENABLED="true"
 # Or with environment variables
 export ADS_ADDR=":8080"
 export ADS_ENABLE_QUIC="true"
+export ADS_QUIC_CERT="/etc/ads/gateway.crt"
+export ADS_QUIC_KEY="/etc/ads/gateway.key"
 ./bin/ads-httpproxy
 
 # The proxy will listen on:
@@ -277,27 +283,33 @@ kubectl get svc ads-httpproxy-svc
 kubectl scale deployment ads-httpproxy --replicas=5
 ```
 
+### Developer Toolkit
+
+```bash
+./bin/ads-httpproxy -config examples/developer.yaml
+export ADS_API_SECRET="local-development-key"
+./bin/ads-dev request -url http://example.com
+./bin/ads-dev captures
+```
+
+See [the developer toolkit guide](docs/developer-toolkit.md) for replay, mocks,
+fault rules, HTTP/3 upstreams, and opaque QUIC relaying.
+
 ### Using the Admin CLI
 
 ```bash
-# Check proxy status
-./bin/ads-admin -addr http://localhost:9090 -secret changeme -cmd status
-
-# Get configuration
-./bin/ads-admin -addr http://localhost:9090 -secret changeme -cmd config
-
-# View statistics
-curl http://localhost:9090/stats
-
-# View active connections
-curl http://localhost:9090/connections
-
-# Get Prometheus metrics
-curl http://localhost:9090/metrics
-
-# Download PAC file
-curl http://localhost:9090/proxy.pac
+export ADS_API_SECRET="your-api-key"
+./bin/ads-admin status -api http://localhost:9090
+./bin/ads-admin config
+./bin/ads-admin stats -format table
+./bin/ads-admin connections -format yaml
+./bin/ads-admin metrics
+./bin/ads-admin interactive
 ```
+
+See [the admin CLI guide](docs/admin-cli.md) for configuration defaults, batch
+operations, plugin management, and shell completion. Live configuration reload
+is disabled; validate a configuration file and restart the service to apply it.
 
 ### Configure Client Applications
 
@@ -316,18 +328,9 @@ export ALL_PROXY=socks5://localhost:1080
 
 ### MASQUE Protocol Support
 
-The proxy supports RFC 9298 (CONNECT-UDP) and RFC 9484 (CONNECT-IP) for tunneling UDP and IP packets over HTTP/3:
-
-```yaml
-features:
-  masque: true  # Enable MASQUE protocol support
-```
-
-**CONNECT-UDP**: Tunnel UDP traffic through the proxy for applications like QUIC, DNS, or VoIP.
-
-**CONNECT-IP**: Tunnel arbitrary IP packets for full VPN-like functionality.
-
-Both protocols use the HTTP Datagram Capsule Protocol for framing.
+MASQUE CONNECT-UDP and CONNECT-IP handlers are experimental and incomplete.
+Use the working HTTP/3 gateway or fixed-target UDP relay for QUIC proxying; see
+[developer toolkit and QUIC configuration](docs/developer-toolkit.md).
 
 ### BrowserID Tracking
 
@@ -417,61 +420,22 @@ dns_science:
 
 ### Plugin Development
 
-Plugins can be developed to extend proxy functionality:
+See [the plugin development guide](docs/plugins.md) for the public SDK, per-plugin
+configuration, version checks, and hot replacement.
 
-```go
-// See internal/plugin/ for the plugin interface
-type Plugin interface {
-    Name() string
-    OnRequest(req *http.Request) error
-    OnResponse(resp *http.Response) error
-}
-```
+Plugins can be developed to extend proxy functionality:
 
 ### Dual Scripting Engine
 
-**Tengo Example** (`policy.tengo`):
-```go
-fmt := import("fmt")
-text := import("text")
-
-// Block requests to specific domains
-export func on_request(req) {
-    if text.contains(req.host, "blocked.com") {
-        return {action: "block", reason: "Forbidden domain"}
-    }
-    return {action: "allow"}
-}
-```
-
-**Starlark Example** (`policy.star`):
-```python
-def on_request(req):
-    # Add custom headers
-    req.headers["X-Proxy-By"] = "ADS-HTTP-Proxy"
-
-    # Log request
-    print("Request to:", req.url)
-
-    return {"action": "allow"}
-
-def on_response(resp):
-    # Modify response
-    if resp.status_code >= 400:
-        print("Error response:", resp.status_code)
-    return {"action": "allow"}
-```
-
-**Hot-Reload:**
-Script files are watched for changes and automatically reloaded without restarting the proxy.
+See [the scripting cookbook](docs/scripting-cookbook.md) for tested Tengo and
+Starlark request/response policies, header modification, and hot reload.
 
 ## API Authentication
 
-The management API uses signature-based authentication:
-1. Calculate signature: `HMAC-SHA256(secret, METHOD + PATH + TIMESTAMP)`
-2. Include headers:
-   - `X-Timestamp`: RFC3339 timestamp
-   - `X-Signature`: Hex-encoded HMAC signature
+The running management API accepts an API key in `X-API-Key`, or Basic
+authentication for a configured `api_users` entry. The admin CLI supports both.
+Protected routes allow unauthenticated requests when neither API secrets nor
+users are configured. `/healthz`, `/metrics`, and `/proxy.pac` are public.
 
 ## Security Considerations
 
@@ -486,7 +450,7 @@ The management API uses signature-based authentication:
 
 - **SO_REUSEPORT**: Multi-process load distribution on Linux and macOS
 - **HTTP/3 (QUIC)**: UDP-based multiplexed connections
-- **MASQUE Protocol**: Efficient UDP/IP tunneling over HTTP/3
+- **QUIC Relay**: Fixed-target opaque UDP/QUIC forwarding
 - **Connection Pooling**: Efficient connection reuse tracking
 - **Redis Caching**: High-performance response caching
 - **Protocol Detection**: Early detection prevents unnecessary processing
@@ -562,3 +526,13 @@ Contributions are welcome! Please:
 ## Support
 
 For issues, questions, or contributions, please open an issue on GitHub.
+
+## Developer and operations guides
+
+- [Developer toolkit and QUIC](docs/developer-toolkit.md)
+- [Management API OpenAPI reference](docs/openapi.json)
+- [Admin CLI](docs/admin-cli.md)
+- [Plugins](docs/plugins.md)
+- [Scripting cookbook](docs/scripting-cookbook.md)
+- [MITM CA setup](docs/mitm.md)
+- [Troubleshooting](docs/troubleshooting.md)
