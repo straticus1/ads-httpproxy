@@ -10,6 +10,10 @@ import (
 	"strconv"
 	"strings"
 
+	"ads-httpproxy/internal/access"
+	"ads-httpproxy/internal/adaptive"
+	"ads-httpproxy/internal/ai"
+	"ads-httpproxy/internal/analysis"
 	"ads-httpproxy/internal/devtools"
 	"ads-httpproxy/internal/mitm"
 
@@ -32,6 +36,11 @@ type QUICRelayConfig struct {
 }
 
 type Config struct {
+	Analysis             *analysis.Config          `json:"analysis" yaml:"analysis"`
+	Adaptive             *adaptive.Config          `json:"adaptive" yaml:"adaptive"`
+	AI                   *ai.Config                `json:"ai" yaml:"ai"`
+	Access               *access.Config            `json:"access" yaml:"access"`
+	GatewayTLS           *GatewayTLSConfig         `json:"gateway_tls" yaml:"gateway_tls"`
 	ParentProxy          string                    `json:"parent_proxy" yaml:"parent_proxy"`
 	QUICRelay            *QUICRelayConfig          `json:"quic_relay" yaml:"quic_relay"`
 	DevTools             *devtools.Config          `json:"devtools" yaml:"devtools"`
@@ -111,6 +120,7 @@ type AppConfig struct {
 
 // AppRoute handles granular L7 rewriting and routing instructions
 type AppRoute struct {
+	RateLimit   int    `json:"rate_limit" yaml:"rate_limit"`
 	PathStrip   string `json:"path_strip" yaml:"path_strip"`     // Substring to rip from matched path implicitly (e.g. /api/v1/)
 	PathRoute   string `json:"path_route" yaml:"path_route"`     // Prefix match required to execute this route
 	PathRewrite string `json:"path_rewrite" yaml:"path_rewrite"` // Explicit rewrite rule
@@ -278,24 +288,36 @@ type AuthConfig struct {
 }
 
 type OIDCConfig struct {
-	Issuer       string   `json:"issuer" yaml:"issuer"`
-	ClientID     string   `json:"client_id" yaml:"client_id"`
-	ClientSecret string   `json:"client_secret" yaml:"client_secret"`
-	RedirectURL  string   `json:"redirect_url" yaml:"redirect_url"`
-	Scopes       []string `json:"scopes" yaml:"scopes"`
+	SessionTTLSeconds   int      `json:"session_ttl_seconds" yaml:"session_ttl_seconds"`
+	SessionCapacity     int      `json:"session_capacity" yaml:"session_capacity"`
+	GroupsClaim         string   `json:"groups_claim" yaml:"groups_claim"`
+	TenantClaim         string   `json:"tenant_claim" yaml:"tenant_claim"`
+	AllowLegacyIDTokens bool     `json:"allow_legacy_id_tokens" yaml:"allow_legacy_id_tokens"`
+	Issuer              string   `json:"issuer" yaml:"issuer"`
+	ClientID            string   `json:"client_id" yaml:"client_id"`
+	ClientSecret        string   `json:"client_secret" yaml:"client_secret"`
+	RedirectURL         string   `json:"redirect_url" yaml:"redirect_url"`
+	Scopes              []string `json:"scopes" yaml:"scopes"`
 }
 
 type OAuth2Config struct {
-	IntrospectionURL string `json:"introspection_url" yaml:"introspection_url"`
-	ClientID         string `json:"client_id" yaml:"client_id"`
-	ClientSecret     string `json:"client_secret" yaml:"client_secret"`
+	Audience         string   `json:"audience" yaml:"audience"`
+	Issuer           string   `json:"issuer" yaml:"issuer"`
+	RequiredScopes   []string `json:"required_scopes" yaml:"required_scopes"`
+	RequireExpiry    bool     `json:"require_expiry" yaml:"require_expiry"`
+	IntrospectionURL string   `json:"introspection_url" yaml:"introspection_url"`
+	ClientID         string   `json:"client_id" yaml:"client_id"`
+	ClientSecret     string   `json:"client_secret" yaml:"client_secret"`
 }
 
 type SAMLConfig struct {
-	MetadataURL string `json:"metadata_url" yaml:"metadata_url"`
-	Cert        string `json:"cert" yaml:"cert"`         // Path to SP Cert
-	Key         string `json:"key" yaml:"key"`           // Path to SP Key
-	RootURL     string `json:"root_url" yaml:"root_url"` // External URL of the proxy (e.g. https://proxy.example.com)
+	GroupsAttribute  string `json:"groups_attribute" yaml:"groups_attribute"`
+	TenantAttribute  string `json:"tenant_attribute" yaml:"tenant_attribute"`
+	SubjectAttribute string `json:"subject_attribute" yaml:"subject_attribute"`
+	MetadataURL      string `json:"metadata_url" yaml:"metadata_url"`
+	Cert             string `json:"cert" yaml:"cert"`         // Path to SP Cert
+	Key              string `json:"key" yaml:"key"`           // Path to SP Key
+	RootURL          string `json:"root_url" yaml:"root_url"` // External URL of the proxy (e.g. https://proxy.example.com)
 }
 
 type LDAPConfig struct {
@@ -653,6 +675,9 @@ func (c *Config) LoadEnv() error {
 
 // Validate checks configuration for errors
 func (c *Config) Validate() error {
+	if err := c.validatePlatform(); err != nil {
+		return err
+	}
 	if (c.CaCert == "") != (c.CaKey == "") {
 		return errors.New("ca_cert and ca_key must be configured together")
 	}

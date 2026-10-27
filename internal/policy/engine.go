@@ -3,8 +3,10 @@ package policy
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -44,12 +46,19 @@ type ClientRequest struct {
 }
 
 type ClientInfo struct {
-	IP      string `json:"ip"`
-	Port    string `json:"port"`
-	Country string `json:"country"` // Requires GeoIP integration
+	VerifiedMTLS bool   `json:"verified_mtls"`
+	IP           string `json:"ip"`
+	Port         string `json:"port"`
+	Country      string `json:"country"` // Requires GeoIP integration
 }
 
 type UserInfo struct {
+	Subject  string   `json:"subject"`
+	Issuer   string   `json:"issuer"`
+	Tenant   string   `json:"tenant"`
+	Scopes   []string `json:"scopes"`
+	AMR      []string `json:"amr"`
+	ACR      string   `json:"acr"`
 	Username string   `json:"username"`
 	Groups   []string `json:"groups"`
 }
@@ -65,10 +74,11 @@ type TimeInfo struct {
 
 // Engine manages policies and evaluation
 type Engine struct {
-	env      *cel.Env
-	policies []*Policy
-	mu       sync.RWMutex
-	pool     sync.Pool
+	defaultBlock bool
+	env          *cel.Env
+	policies     []*Policy
+	mu           sync.RWMutex
+	pool         sync.Pool
 }
 
 // NewEngine creates a new policy engine
@@ -133,11 +143,36 @@ func (e *Engine) LoadFromFile(path string) error {
 		default:
 			return fmt.Errorf("policy %q has unsupported effect %q", item.ID, item.Effect)
 		}
+		for _, action := range item.Actions {
+			name, arg, _ := strings.Cut(action, ":")
+			switch name {
+			case "rate_limit":
+				n, err := strconv.Atoi(arg)
+				if err != nil || n < 1 || n > 100000 {
+					return fmt.Errorf("invalid rate_limit action")
+				}
+			case "redact_headers":
+				if arg == "" {
+					return fmt.Errorf("redact_headers requires header names")
+				}
+				for _, h := range strings.Split(arg, ",") {
+					h = strings.TrimSpace(h)
+					if h == "" || strings.ContainsAny(h, " \r\n:") {
+						return fmt.Errorf("invalid header action")
+					}
+				}
+			default:
+				return fmt.Errorf("unsupported policy action %q", action)
+			}
+		}
 		ast, issues := e.env.Compile(item.Condition)
 		if issues != nil && issues.Err() != nil {
 			return fmt.Errorf("compile policy %q: %w", item.ID, issues.Err())
 		}
-		program, err := e.env.Program(ast)
+		if ast.OutputType().String() != "bool" {
+			return fmt.Errorf("policy %q condition must return bool", item.ID)
+		}
+		program, err := e.env.Program(ast, cel.CostLimit(10000), cel.InterruptCheckFrequency(100))
 		if err != nil {
 			return fmt.Errorf("create policy %q: %w", item.ID, err)
 		}
@@ -174,10 +209,17 @@ func (e *Engine) Evaluate(ctx context.Context, evalCtx *EvalContext) (bool, bool
 	clientMap["ip"] = evalCtx.Client.IP
 	clientMap["port"] = evalCtx.Client.Port
 	clientMap["country"] = evalCtx.Client.Country
+	clientMap["verified_mtls"] = evalCtx.Client.VerifiedMTLS
 
 	userMap := input["user"].(map[string]interface{})
 	userMap["username"] = evalCtx.User.Username
 	userMap["groups"] = evalCtx.User.Groups
+	userMap["subject"] = evalCtx.User.Subject
+	userMap["issuer"] = evalCtx.User.Issuer
+	userMap["tenant"] = evalCtx.User.Tenant
+	userMap["scopes"] = evalCtx.User.Scopes
+	userMap["amr"] = evalCtx.User.AMR
+	userMap["acr"] = evalCtx.User.ACR
 
 	timeMap := input["time"].(map[string]interface{})
 	timeMap["year"] = evalCtx.Time.Year
@@ -190,13 +232,17 @@ func (e *Engine) Evaluate(ctx context.Context, evalCtx *EvalContext) (bool, bool
 	// Default: Allow
 
 	for _, p := range e.policies {
-		out, _, err := p.Program.Eval(input)
+		out, _, err := p.Program.ContextEval(ctx, input)
 		if err != nil {
 			logging.Logger.Warn("Policy evaluation error", zap.String("id", p.ID), zap.Error(err))
-			continue
+			return false, true, nil, "Policy evaluation failed: " + p.ID
 		}
 
 		if matched, ok := out.Value().(bool); ok && matched {
+			if strings.EqualFold(p.Effect, "log") {
+				logging.Logger.Info("Policy observed", zap.String("id", p.ID))
+				continue
+			}
 			logging.Logger.Debug("Policy Matched", zap.String("id", p.ID), zap.String("effect", p.Effect))
 
 			if strings.EqualFold(p.Effect, "block") {
@@ -215,7 +261,7 @@ func (e *Engine) Evaluate(ctx context.Context, evalCtx *EvalContext) (bool, bool
 
 	// No policy matched -> Default Allow (or should be Block?)
 	// Usually proxy is Default Allow unless blocked.
-	return true, false, nil, "No policy matched"
+	return !e.defaultBlock, false, nil, "No policy matched"
 }
 
 // Helper to construct context from HTTP Request
@@ -236,7 +282,9 @@ func NewEvalContext(req *http.Request, username string, group string) *EvalConte
 		groups = append(groups, group)
 	}
 
+	clientIP, clientPort, _ := net.SplitHostPort(req.RemoteAddr)
 	return &EvalContext{
+		Client: ClientInfo{IP: clientIP, Port: clientPort},
 		Request: ClientRequest{
 			Method:   req.Method,
 			URL:      req.URL.String(),
@@ -259,4 +307,10 @@ func NewEvalContext(req *http.Request, username string, group string) *EvalConte
 		},
 		// Client info usually needs IP extraction logic passed in or done here
 	}
+}
+
+func (e *Engine) SetDefaultEffect(effect string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.defaultBlock = effect == "" || effect == "block"
 }

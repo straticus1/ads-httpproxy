@@ -90,6 +90,8 @@ func (sm *SessionManager) Delete(key string) {
 //     an empty list permits all source IPs (only safe on private interfaces).
 func NewAuthenticator(cfg *config.AuthConfig, logger *zap.Logger) (Authenticator, error) {
 	switch cfg.Mechanism {
+	case "mtls":
+		return MTLSAuthenticator{}, nil
 	case "ldap":
 		return NewLDAPAuthenticator(cfg.LDAP, logger)
 	case "ad":
