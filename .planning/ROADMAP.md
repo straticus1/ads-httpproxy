@@ -49,3 +49,17 @@ These are concrete foundations for steps 1–5 above. Compatibility still needs
 live Squid differential tests; performance still needs comparative runs. Fleet
 enrollment/rollouts, distributed state, full per-tenant resource isolation and
 billing-grade usage accounting remain open. See TODO for executable next work.
+
+## Phase 02: Optional media gateway — planned
+
+Goal: an independently deployable, default-off media subsystem that connects
+verified platform identity/policy to mature SIP, RTPengine and TURN services.
+Status: plans reviewed and ready for implementation (8 plans, 16 tasks, 6 waves).
+No media listener or service has been implemented.
+Requirements: MG-01 through MG-10 in
+`phases/02-media-gateway/02-CONTEXT.md`.
+Canonical plan directory: `.planning/phases/02-media-gateway/`.
+This is a parallel product expansion; existing engine/cloud backlog remains open.
+
+Plan index: [02-INDEX.md](phases/02-media-gateway/02-INDEX.md).
+Independent review: [02-REVIEW.md](phases/02-media-gateway/02-REVIEW.md).

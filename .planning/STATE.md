@@ -19,3 +19,13 @@ Next: Squid differential testing and representative capacity baselines; expanded
 protocol/failure coverage; explicit ingress/egress policy composition; fleet
 rollouts, distributed sessions/quotas, retention isolation and usage accounting.
 Rego/Cedar are not implemented. See TODO and docs/cloud-engine.md for boundaries.
+
+## Current activity: optional media gateway plans
+
+User requested written plans only. Phase02 planning is complete: eight plans,
+sixteen tasks and six dependency waves cover MG-01 through MG-10. Context,
+primary-source research, validation strategy and execution index are present.
+Independent revision review passed with all six findings resolved; static
+structure/ownership/link checks passed. Status: ready for implementation.
+No media runtime/deployment work was performed or represented as complete.
+Start with .planning/phases/02-media-gateway/02-INDEX.md and plan02-01.

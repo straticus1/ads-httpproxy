@@ -544,3 +544,9 @@ For issues, questions, or contributions, please open an issue on GitHub.
 - [Protocol validation and benchmark harness](docs/protocol-validation.md): tested paths and explicit limits.
 - [Versioned policy decisions](docs/policy-contract.md): verified inputs and atomic publication.
 - [Cloud engine boundaries](docs/cloud-engine.md): signed releases and scoped tenant API keys.
+
+### Proposed optional media gateway
+
+The [media gateway plan](docs/media-gateway-plan.md) describes separate SIP,
+RTPengine and TURN integrations with tenant authorization and lifecycle controls.
+This is planned work; media gateway support is not yet implemented.

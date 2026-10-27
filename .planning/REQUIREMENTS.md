@@ -29,3 +29,12 @@ identity spoofing, cache invalidation/races, queue saturation/retries/isolation,
 adaptive shadow/enforce/rollback/expiry, AI provider failure and egress controls.
 All new features opt-in; existing configs remain valid. Operational docs must state
 single-instance/session-store and distributed-system limitations accurately.
+
+## Optional media gateway (planning only)
+
+MG-01 through MG-10 are defined in
+[phase context](phases/02-media-gateway/02-CONTEXT.md#requirements).
+They cover default-off behavior, identity/policy, session reservations, SIP/SDP,
+RTPengine, TURN, encrypted-media/NAT compatibility, enforced resource limits,
+metadata privacy and real-backend/failure/load validation. None is implemented
+by this planning change. Detailed traceability is maintained in the phase plans.
