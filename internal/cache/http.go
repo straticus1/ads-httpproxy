@@ -344,6 +344,9 @@ func (cr *CachedResponse) ToResponse(req *http.Request) *http.Response {
 // cacheableRequest deliberately bypasses requests needing identity-specific,
 // range, or revalidation semantics that this shared cache does not implement.
 func cacheableRequest(req *http.Request) bool {
+	if private, _ := req.Context().Value(privateRequestKey{}).(bool); private {
+		return false
+	}
 	if req.Method != http.MethodGet && req.Method != http.MethodHead {
 		return false
 	}

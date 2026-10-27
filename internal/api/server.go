@@ -1,15 +1,22 @@
 package api
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
+	"ads-httpproxy/internal/adaptive"
+	"ads-httpproxy/internal/analysis"
 	"ads-httpproxy/internal/api/ui"
 	"ads-httpproxy/internal/bandwidth"
 	"ads-httpproxy/internal/config"
@@ -25,12 +32,18 @@ import (
 
 // Server represents the Admin API server.
 type Server struct {
-	devtools     *devtools.Toolkit
-	cfg          *config.Config
-	limiter      bandwidth.Limiter
-	apiLimiter   bandwidth.Limiter
-	cacheHandler *CacheHandler
-	pluginMgr    *plugin.Manager
+	analysis       *analysis.Manager
+	adaptive       *adaptive.Engine
+	revokeIdentity func(string) int
+	mu             sync.Mutex
+	server         *http.Server
+	listener       net.Listener
+	devtools       *devtools.Toolkit
+	cfg            *config.Config
+	limiter        bandwidth.Limiter
+	apiLimiter     bandwidth.Limiter
+	cacheHandler   *CacheHandler
+	pluginMgr      *plugin.Manager
 }
 
 // NewServer creates a new Admin API server.
@@ -58,6 +71,7 @@ func (s *Server) SetDevTools(toolkit *devtools.Toolkit) { s.devtools = toolkit }
 // Handler builds the management routes with their authentication and rate limits.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	s.mountPlatform(mux)
 	if s.devtools != nil {
 		mux.HandleFunc("/api/devtools/exchanges", s.rateLimitMiddleware(s.authMiddleware(s.devtools.HandleExchanges)))
 		mux.HandleFunc("/api/devtools/rules", s.rateLimitMiddleware(s.authMiddleware(s.devtools.HandleRules)))
@@ -119,41 +133,68 @@ func (s *Server) Handler() http.Handler {
 }
 
 // Start runs the API server in a background goroutine.
-func (s *Server) Start() {
-	mux := s.Handler()
-	logging.Logger.Info("Starting Admin API", zap.String("addr", s.cfg.ApiAddr))
+func (s *Server) Start() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.server != nil {
+		return fmt.Errorf("management API already started")
+	}
+	if s.cfg.ApiAddr == "" {
+		return nil
+	}
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
+	useTLS := s.cfg.ApiCert != "" || s.cfg.ApiPrivKey != ""
+	if useTLS {
+		cert, err := tls.LoadX509KeyPair(s.cfg.ApiCert, s.cfg.ApiPrivKey)
+		if err != nil {
+			return fmt.Errorf("management TLS: %w", err)
+		}
+		tlsConfig.Certificates = []tls.Certificate{cert}
+	}
+	if s.cfg.ApiClientCA != "" {
+		if !useTLS {
+			return fmt.Errorf("management client CA requires TLS")
+		}
+		pem, err := os.ReadFile(s.cfg.ApiClientCA)
+		if err != nil {
+			return fmt.Errorf("management client CA: %w", err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pem) {
+			return fmt.Errorf("management client CA contains no certificates")
+		}
+		tlsConfig.ClientCAs = pool
+		tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
+	}
+	listener, err := net.Listen("tcp", s.cfg.ApiAddr)
+	if err != nil {
+		return err
+	}
+	s.listener = listener
+	server := &http.Server{Handler: s.Handler(), TLSConfig: tlsConfig, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second}
+	s.server = server
 	go func() {
-		if s.cfg.ApiCert != "" && s.cfg.ApiPrivKey != "" {
-			logging.Logger.Info("Using TLS for Admin API")
-
-			tlsConfig := &tls.Config{}
-			if s.cfg.ApiClientCA != "" {
-				caCert, err := os.ReadFile(s.cfg.ApiClientCA)
-				if err != nil {
-					logging.Logger.Error("Failed to read API Client CA", zap.Error(err))
-				} else {
-					caCertPool := x509.NewCertPool()
-					caCertPool.AppendCertsFromPEM(caCert)
-					tlsConfig.ClientCAs = caCertPool
-					tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
-					logging.Logger.Info("Enabled Client Certificate Authentication (mTLS) for Admin API")
-				}
-			}
-
-			server := &http.Server{
-				Addr:      s.cfg.ApiAddr,
-				Handler:   mux,
-				TLSConfig: tlsConfig,
-			}
-			if err := server.ListenAndServeTLS(s.cfg.ApiCert, s.cfg.ApiPrivKey); err != nil {
-				logging.Logger.Error("Admin API TLS failed", zap.Error(err))
-			}
+		var err error
+		if useTLS {
+			err = server.ServeTLS(listener, "", "")
 		} else {
-			if err := http.ListenAndServe(s.cfg.ApiAddr, mux); err != nil {
-				logging.Logger.Error("Admin API failed", zap.Error(err))
-			}
+			err = server.Serve(listener)
+		}
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logging.Logger.Error("Admin API failed", zap.Error(err))
 		}
 	}()
+	return nil
+}
+
+func (s *Server) Shutdown(ctx context.Context) error {
+	s.mu.Lock()
+	server := s.server
+	s.mu.Unlock()
+	if server == nil {
+		return nil
+	}
+	return server.Shutdown(ctx)
 }
 
 func (s *Server) rateLimitMiddleware(next http.HandlerFunc) http.HandlerFunc {

@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"sync" // Added sync for Pool
 
+	"ads-httpproxy/internal/auth"
+	"ads-httpproxy/internal/cache"
 	"ads-httpproxy/internal/plugin"
 	"ads-httpproxy/internal/policy"
 	"ads-httpproxy/internal/visibility" // Import visibility
@@ -65,6 +67,9 @@ func (s *Server) middlewareGeoIP(req *http.Request, ctx *goproxy.ProxyCtx) (*htt
 func (s *Server) middlewareAuth(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
 	// Skip auth for internal health checks if needed, but handled by apiServer usually.
 
+	for _, h := range []string{"X-Authenticated-User", "X-Tenant-ID", "X-Device-ID", "X-Device-Compliant", "X-Authenticated-Groups", "X-Authenticated-Scopes", "X-Authenticated-Tenant", "X-Groups"} {
+		req.Header.Del(h)
+	}
 	authenticated, user, challenge, err := s.authenticator.Authenticate(req)
 	if err != nil {
 		logging.Logger.Error("Authentication error", zap.Error(err))
@@ -85,6 +90,11 @@ func (s *Server) middlewareAuth(req *http.Request, ctx *goproxy.ProxyCtx) (*http
 	// Use Zap logger context to track user for this request?
 	// goproxy doesn't propagate context easily to recursive handlers, but we can set headers
 	logging.Logger.Debug("Authenticated request", zap.String("user", user))
+	bindLegacyPrincipal(req, user)
+	if p, ok := auth.PrincipalFromContext(req.Context()); ok && (p.Subject != "anonymous" || p.Issuer != "local") {
+		cache.MarkPrivate(req)
+	}
+	stripIdentityCookies(req)
 	req.Header.Set("X-Authenticated-User", user)
 
 	return req, nil
@@ -116,8 +126,17 @@ func (s *Server) middlewareWAF(req *http.Request, ctx *goproxy.ProxyCtx) (*http.
 // middlewarePolicy evaluates CEL policies.
 func (s *Server) middlewarePolicy(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
 	// Extract Context
-	user := req.Header.Get("X-Authenticated-User")
-	evalCtx := policy.NewEvalContext(req, user, "") // TODO: Group support
+	principal, _ := auth.PrincipalFromContext(req.Context())
+	user := principal.Username
+	evalCtx := policy.NewEvalContext(req, user, "")
+	evalCtx.User.Groups = principal.Groups
+	evalCtx.User.Subject = principal.Subject
+	evalCtx.User.Issuer = principal.Issuer
+	evalCtx.User.Tenant = principal.Tenant
+	evalCtx.User.Scopes = principal.Scopes
+	evalCtx.User.AMR = principal.AMR
+	evalCtx.User.ACR = principal.ACR
+	evalCtx.Client.VerifiedMTLS = clientIdentity(req).VerifiedMTLS
 
 	// Check Policies
 	if s.policyEngine == nil {
@@ -131,6 +150,9 @@ func (s *Server) middlewarePolicy(req *http.Request, ctx *goproxy.ProxyCtx) (*ht
 		return req, goproxy.NewResponse(req, goproxy.ContentTypeText, http.StatusForbidden, "Access Denied: "+reason)
 	}
 
+	if code, err := s.applyPolicyActions(req, actions, reason); err != nil {
+		return req, goproxy.NewResponse(req, "text/plain", code, err.Error())
+	}
 	if matched {
 		logging.Logger.Debug("Policy Matched", zap.String("reason", reason))
 	}
@@ -289,7 +311,7 @@ func (s *Server) middlewareICAP(req *http.Request, ctx *goproxy.ProxyCtx) (*http
 
 // middlewareRespDLP checks response body for sensitive data.
 func (s *Server) middlewareRespDLP(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
-	if s.dlpScanner == nil || resp == nil || resp.Body == nil {
+	if s.dlpScanner == nil || resp == nil || resp.Body == nil || resp.StatusCode == http.StatusSwitchingProtocols {
 		return resp
 	}
 
@@ -333,6 +355,9 @@ func (s *Server) middlewareRespDLP(resp *http.Response, ctx *goproxy.ProxyCtx) *
 
 // middlewareRespICAP sends response to ICAP server.
 func (s *Server) middlewareRespICAP(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
+	if resp == nil || resp.StatusCode == http.StatusSwitchingProtocols {
+		return resp
+	}
 	modifiedResp, err := s.icapClient.RespMod(resp)
 	if err != nil {
 		logging.Logger.Error("ICAP RespMod failed", zap.Error(err))

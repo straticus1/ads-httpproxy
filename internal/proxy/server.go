@@ -8,11 +8,16 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
 	"strings"
 
+	"ads-httpproxy/internal/access"
+	"ads-httpproxy/internal/adaptive"
+	"ads-httpproxy/internal/ai"
+	"ads-httpproxy/internal/analysis"
 	"ads-httpproxy/internal/api"
 	"ads-httpproxy/internal/auth"
 	"ads-httpproxy/internal/bandwidth"
@@ -49,6 +54,7 @@ import (
 	"github.com/quic-go/quic-go/http3"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/acme/autocert"
+	"golang.org/x/time/rate"
 )
 
 type RequestMiddleware func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response)
@@ -71,43 +77,52 @@ func (b bufferPoolAdapter) Put(bytes []byte) {
 }
 
 type Server struct {
-	scriptWatcher  io.Closer
-	quicRelay      *UDPRelay
-	devtools       *devtools.Toolkit
-	h3Server       *http3.Server
-	h3Transport    *http3.Transport
-	quicConn       net.PacketConn
-	cfg            *config.Config
-	proxy          *goproxy.ProxyHttpServer
-	pm             *plugin.Manager
-	apiServer      *api.Server
-	limiter        bandwidth.Limiter
-	icapClient     *icap.Cluster
-	dlpScanner     *dlp.VisualDLP
-	wafEngine      *waf.Engine
-	threatMgr      *threat.Manager
-	geoIP          *geoip.Lookup
-	scriptEngine   engine.Engine
-	policyEngine   *policy.Engine
-	peerMgr        *peering.PeerManager
-	reputation     *reputation.Client
-	feedManager    *reputation.FeedManager
-	authenticator  auth.Authenticator
-	httpCache      *cache.HTTPCache
-	screenshot     *screenshot.Service
-	httpServer     *http.Server
-	middleware     []RequestMiddleware
-	respMiddleware []ResponseMiddleware
-	compiledRoutes []PreparedRoute // Legacy simple routes
-	compiledApps   map[string]*PreparedApp
-	certManager    *autocert.Manager
-	upstreamMgr    *UpstreamManager
-	anomalyMonitor *ml.AnomalyMonitor
+	telemetryShutdown func(context.Context) error
+	analysis          *analysis.Manager
+	adaptive          *adaptive.Engine
+	aiGate            *ai.Gate
+	servicesOnce      sync.Once
+	initErr           error
+	access            *access.Evaluator
+	actionLimits      actionLimits
+	scriptWatcher     io.Closer
+	quicRelay         *UDPRelay
+	devtools          *devtools.Toolkit
+	h3Server          *http3.Server
+	h3Transport       *http3.Transport
+	quicConn          net.PacketConn
+	cfg               *config.Config
+	proxy             *goproxy.ProxyHttpServer
+	pm                *plugin.Manager
+	apiServer         *api.Server
+	limiter           bandwidth.Limiter
+	icapClient        *icap.Cluster
+	dlpScanner        *dlp.VisualDLP
+	wafEngine         *waf.Engine
+	threatMgr         *threat.Manager
+	geoIP             *geoip.Lookup
+	scriptEngine      engine.Engine
+	policyEngine      *policy.Engine
+	peerMgr           *peering.PeerManager
+	reputation        *reputation.Client
+	feedManager       *reputation.FeedManager
+	authenticator     auth.Authenticator
+	httpCache         *cache.HTTPCache
+	screenshot        *screenshot.Service
+	httpServer        *http.Server
+	middleware        []RequestMiddleware
+	respMiddleware    []ResponseMiddleware
+	compiledRoutes    []PreparedRoute // Legacy simple routes
+	compiledApps      map[string]*PreparedApp
+	certManager       *autocert.Manager
+	upstreamMgr       *UpstreamManager
+	anomalyMonitor    *ml.AnomalyMonitor
 }
 
 type PreparedAppRoute struct {
-	Config config.AppRoute
-	Proxy  *httputil.ReverseProxy
+	RequestLimiter *rate.Limiter
+	Config         config.AppRoute
+	Proxy          *httputil.ReverseProxy
 }
 
 type PreparedApp struct {
@@ -116,11 +131,12 @@ type PreparedApp struct {
 }
 
 type PreparedRoute struct {
-	Path       string
-	Upstream   *url.URL
-	Proxy      *httputil.ReverseProxy
-	RateLimit  int
-	AuthMethod string
+	RequestLimiter *rate.Limiter
+	Path           string
+	Upstream       *url.URL
+	Proxy          *httputil.ReverseProxy
+	RateLimit      int
+	AuthMethod     string
 }
 
 func NewServer(cfg *config.Config) *Server {
@@ -473,33 +489,38 @@ func NewServer(cfg *config.Config) *Server {
 	// Configuration Upstream Manager
 	um := NewUpstreamManager(cfg)
 
-	// OpenTelemetry Tracing
-	if _, err := telemetry.InitProvider(context.Background(), "ads-httpproxy"); err != nil {
-		logging.Logger.Warn("OpenTelemetry tracing failed to start", zap.Error(err))
+	var telemetryShutdown func(context.Context) error
+	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "" || os.Getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") != "" {
+		if provider, err := telemetry.InitProvider(context.Background(), "ads-httpproxy"); err != nil {
+			logging.Logger.Warn("OpenTelemetry tracing failed to start", zap.Error(err))
+		} else {
+			telemetryShutdown = provider.Shutdown
+		}
 	}
 
 	s := &Server{
-		devtools:       toolkit,
-		cfg:            cfg,
-		proxy:          p,
-		pm:             pm,
-		apiServer:      apiServer,
-		limiter:        l,
-		icapClient:     icapClient,
-		dlpScanner:     dlpScanner,
-		wafEngine:      wafEngine,
-		threatMgr:      threatMgr,
-		geoIP:          geoLookup,
-		scriptEngine:   scriptEngine,
-		policyEngine:   policyEngine,
-		peerMgr:        peerMgr,
-		reputation:     repClient,
-		feedManager:    feedMgr,
-		authenticator:  authenticator,
-		httpCache:      httpCacheMgr,
-		screenshot:     screenshotSvc,
-		upstreamMgr:    um,
-		anomalyMonitor: ml.NewAnomalyMonitor(),
+		telemetryShutdown: telemetryShutdown,
+		devtools:          toolkit,
+		cfg:               cfg,
+		proxy:             p,
+		pm:                pm,
+		apiServer:         apiServer,
+		limiter:           l,
+		icapClient:        icapClient,
+		dlpScanner:        dlpScanner,
+		wafEngine:         wafEngine,
+		threatMgr:         threatMgr,
+		geoIP:             geoLookup,
+		scriptEngine:      scriptEngine,
+		policyEngine:      policyEngine,
+		peerMgr:           peerMgr,
+		reputation:        repClient,
+		feedManager:       feedMgr,
+		authenticator:     authenticator,
+		httpCache:         httpCacheMgr,
+		screenshot:        screenshotSvc,
+		upstreamMgr:       um,
+		anomalyMonitor:    ml.NewAnomalyMonitor(),
 	}
 
 	if len(cfg.QUICUpstreams) > 0 {
@@ -517,6 +538,33 @@ func NewServer(cfg *config.Config) *Server {
 			Cache:      autocert.DirCache(cfg.AutoCertCacheDir),
 			HostPolicy: s.autocertHostPolicy,
 		}
+	}
+
+	if cfg.Access != nil {
+		s.access, s.initErr = access.New(*cfg.Access)
+		if cfg.Access.Enabled {
+			s.policyEngine.SetDefaultEffect(cfg.Access.DefaultEffect)
+		}
+	}
+
+	if cfg.Analysis != nil && cfg.Analysis.Enabled {
+		m, err := analysis.New(*cfg.Analysis, nil)
+		s.analysis = m
+		s.initErr = errors.Join(s.initErr, err)
+	}
+	if cfg.Adaptive != nil && cfg.Adaptive.Enabled {
+		e, err := adaptive.New(*cfg.Adaptive)
+		s.adaptive = e
+		s.initErr = errors.Join(s.initErr, err)
+	}
+	if cfg.AI != nil && cfg.AI.Egress != nil && cfg.AI.Egress.Enabled {
+		g, err := ai.NewGate(*cfg.AI.Egress)
+		s.aiGate = g
+		s.initErr = errors.Join(s.initErr, err)
+	}
+	s.apiServer.SetPlatform(s.analysis, s.adaptive)
+	if revoker, ok := s.authenticator.(interface{ RevokeSubject(string) int }); ok {
+		s.apiServer.SetIdentityRevoker(revoker.RevokeSubject)
 	}
 
 	// Pre-compile App Routes
@@ -560,8 +608,9 @@ func NewServer(cfg *config.Config) *Server {
 			proxy.Transport = s.wrapTransport(nil, false)
 			proxy.ModifyResponse = s.processGatewayResponse
 			a.Routes = append(a.Routes, PreparedAppRoute{
-				Config: r,
-				Proxy:  proxy,
+				RequestLimiter: newRouteLimiter(r.RateLimit),
+				Config:         r,
+				Proxy:          proxy,
 			})
 		}
 		for _, domain := range appCfg.Domains {
@@ -621,11 +670,12 @@ func NewServer(cfg *config.Config) *Server {
 		proxy.ModifyResponse = s.processGatewayResponse
 
 		s.compiledRoutes = append(s.compiledRoutes, PreparedRoute{
-			Path:       r.Path,
-			Upstream:   initialTarget, // Stored for metadata/logging
-			Proxy:      proxy,
-			RateLimit:  r.RateLimit,
-			AuthMethod: r.AuthMethod,
+			RequestLimiter: newRouteLimiter(r.RateLimit),
+			Path:           r.Path,
+			Upstream:       initialTarget, // Stored for metadata/logging
+			Proxy:          proxy,
+			RateLimit:      r.RateLimit,
+			AuthMethod:     r.AuthMethod,
 		})
 	}
 
@@ -650,7 +700,7 @@ func NewServer(cfg *config.Config) *Server {
 	// 3. Auth — always enforced. The authenticator is never nil: when no
 	// mechanism is configured, a DenyAllAuthenticator blocks all traffic
 	// unless allow_unauthenticated is explicitly set in the config.
-	s.middleware = append(s.middleware, s.middlewareAuth)
+	s.middleware = append(s.middleware, s.middlewareAuth, s.middlewareAccess)
 
 	// 5. Policy Engine (Needs User/Time/Geo context)
 	if s.policyEngine != nil {
@@ -725,6 +775,7 @@ func NewServer(cfg *config.Config) *Server {
 		for _, mw := range s.middleware {
 			r, resp := mw(req, ctx)
 			if resp != nil {
+				s.recordDecision(req, resp.StatusCode, "request middleware rejected traffic")
 				return r, resp
 			}
 			if r != nil {
@@ -754,6 +805,13 @@ func NewServer(cfg *config.Config) *Server {
 
 // GatewayHandler is the main HTTP handler for reverse proxy routes
 func (s *Server) GatewayHandler(w http.ResponseWriter, r *http.Request) {
+	if s.initErr != nil {
+		http.Error(w, "Proxy configuration unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if browser, ok := s.authenticator.(auth.BrowserAuthenticator); ok && browser.HandleBrowser(w, r) {
+		return
+	}
 	// Start OTel Trace Span
 	tracer := telemetry.GetTracer("ads-httpproxy.gateway")
 	ctx, span := tracer.Start(r.Context(), r.URL.Path)
@@ -762,10 +820,16 @@ func (s *Server) GatewayHandler(w http.ResponseWriter, r *http.Request) {
 
 	if s.cfg.Features != nil && s.cfg.Features.MASQUE {
 		if r.Method == "CONNECT-UDP" {
+			if !s.applyGatewayRequestMiddleware(w, r) {
+				return
+			}
 			masque.HandleUDP(w, r)
 			return
 		}
 		if r.Method == "CONNECT-IP" {
+			if !s.applyGatewayRequestMiddleware(w, r) {
+				return
+			}
 			masque.HandleIP(w, r)
 			return
 		}
@@ -784,6 +848,11 @@ func (s *Server) GatewayHandler(w http.ResponseWriter, r *http.Request) {
 			// App matches, route it by L7 paths
 			for _, route := range app.Routes {
 				if strings.HasPrefix(r.URL.Path, route.Config.PathRoute) {
+					if route.RequestLimiter != nil && !route.RequestLimiter.Allow() {
+						w.Header().Set("Retry-After", "1")
+						http.Error(w, "Route request limit exceeded", 429)
+						return
+					}
 					// We matched!
 					// Enforce application-specific WAF natively
 					if app.Config.WAF && s.wafEngine != nil {
@@ -803,15 +872,6 @@ func (s *Server) GatewayHandler(w http.ResponseWriter, r *http.Request) {
 
 					// Proxy Execute or WebSocket Hijack
 					logging.Logger.Info("App Route Matched", zap.String("app", r.Host), zap.String("route", route.Config.PathRoute))
-
-					if strings.ToLower(r.Header.Get("Connection")) == "upgrade" && strings.ToLower(r.Header.Get("Upgrade")) == "websocket" {
-						// Retrieve assigned UPSTREAM from proxy Director modification loop via a dummy copy
-						target, _ := s.upstreamMgr.GetTarget(route.Config.Upstream)
-						if target != nil {
-							HandleWebSocket(w, r, target)
-							return
-						}
-					}
 
 					route.Proxy.ServeHTTP(w, r)
 					return
@@ -860,44 +920,10 @@ func (s *Server) GatewayHandler(w http.ResponseWriter, r *http.Request) {
 						s.anomalyMonitor.Track(clientIP)
 					}
 
-					// Gateway Logic: Rate Limit & Auth
-					// 1. Rate Limit (Global for route for now)
-					if s.limiter != nil {
-						if err := s.limiter.WaitN(r.Context(), 1); err != nil {
-							http.Error(w, "Rate Limit Exceeded", http.StatusTooManyRequests)
-							return
-						}
-					}
-
-					// 2. Auth Pipeline (Execute Native Authenticator on Gateway Route)
-					if route.AuthMethod != "" && route.AuthMethod != "none" {
-						if s.authenticator != nil {
-							authenticated, user, challenge, err := s.authenticator.Authenticate(r)
-							if err != nil {
-								logging.Logger.Error("Gateway authentication error", zap.Error(err))
-								http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-								return
-							}
-							if !authenticated {
-								if challenge == "" {
-									challenge, _ = s.authenticator.Challenge(r)
-								}
-								if challenge != "" {
-									w.Header().Set("WWW-Authenticate", challenge)
-									w.Header().Set("Proxy-Authenticate", challenge)
-								}
-								http.Error(w, "Unauthorized", http.StatusUnauthorized)
-								return
-							}
-							// Fast-path user identity propagation to upstream
-							r.Header.Set("X-Authenticated-User", user)
-						} else {
-							// Fallback to basic header existence check if authenticator is somehow nil
-							if r.Header.Get("Authorization") == "" {
-								http.Error(w, "Unauthorized", http.StatusUnauthorized)
-								return
-							}
-						}
+					if route.RequestLimiter != nil && !route.RequestLimiter.Allow() {
+						w.Header().Set("Retry-After", "1")
+						http.Error(w, "Route request limit exceeded", http.StatusTooManyRequests)
+						return
 					}
 
 					logging.Logger.Info("Gateway: Proxying request",
@@ -906,12 +932,6 @@ func (s *Server) GatewayHandler(w http.ResponseWriter, r *http.Request) {
 
 					// Update Host header
 					r.Host = route.Upstream.Host
-
-					// Hook WebSocket Support for Legacy Routing
-					if strings.ToLower(r.Header.Get("Connection")) == "upgrade" && strings.ToLower(r.Header.Get("Upgrade")) == "websocket" {
-						HandleWebSocket(w, r, route.Upstream)
-						return
-					}
 
 					route.Proxy.ServeHTTP(w, r)
 					return
@@ -972,6 +992,7 @@ func (s *Server) applyGatewayRequestMiddleware(w http.ResponseWriter, req *http.
 		if response == nil {
 			continue
 		}
+		s.recordDecision(req, response.StatusCode, "gateway middleware rejected traffic")
 		for key, values := range response.Header {
 			for _, value := range values {
 				w.Header().Add(key, value)
@@ -990,6 +1011,13 @@ func (s *Server) applyGatewayRequestMiddleware(w http.ResponseWriter, req *http.
 }
 
 func (s *Server) Serve(l net.Listener) error {
+	if s.initErr != nil {
+		return s.initErr
+	}
+	gatewayTLS, err := s.gatewayTLSConfig()
+	if err != nil {
+		return fmt.Errorf("gateway TLS: %w", err)
+	}
 	logging.Logger.Info("Starting proxy server", zap.String("addr", l.Addr().String()))
 
 	// Start a fixed-target relay for opaque QUIC/UDP traffic when configured.
@@ -1019,6 +1047,10 @@ func (s *Server) Serve(l net.Listener) error {
 			}
 			return err
 		}
+		if gatewayTLS != nil {
+			tlsConfig.ClientCAs = gatewayTLS.ClientCAs
+			tlsConfig.ClientAuth = gatewayTLS.ClientAuth
+		}
 		conn, err := net.ListenPacket("udp", l.Addr().String())
 		if err != nil {
 			if s.quicRelay != nil {
@@ -1036,7 +1068,10 @@ func (s *Server) Serve(l net.Listener) error {
 	}
 
 	// Start Admin API after proxy listener setup succeeds.
-	s.apiServer.Start()
+	if err := s.apiServer.Start(); err != nil {
+		_ = s.Shutdown(context.Background())
+		return fmt.Errorf("management API: %w", err)
+	}
 
 	// Use GatewayHandler instead of s.proxy directly
 	s.httpServer = &http.Server{
@@ -1054,11 +1089,19 @@ func (s *Server) Serve(l net.Listener) error {
 		s.httpServer.TLSConfig = s.certManager.TLSConfig()
 	}
 
+	if gatewayTLS != nil {
+		s.httpServer.TLSConfig = gatewayTLS
+		return s.httpServer.ServeTLS(l, "", "")
+	}
 	return s.httpServer.Serve(l)
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
 	var errs []error
+	if s.apiServer != nil {
+		errs = append(errs, s.apiServer.Shutdown(ctx))
+	}
+
 	if s.quicRelay != nil {
 		errs = append(errs, s.quicRelay.Close())
 	}
@@ -1086,6 +1129,32 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s.scriptEngine != nil {
 		errs = append(errs, s.scriptEngine.Close())
 	}
+	s.servicesOnce.Do(func() {
+		if s.telemetryShutdown != nil {
+			errs = append(errs, s.telemetryShutdown(ctx))
+		}
+		if s.anomalyMonitor != nil {
+			s.anomalyMonitor.Close()
+		}
+		if s.feedManager != nil {
+			s.feedManager.Stop()
+		}
+		if s.threatMgr != nil {
+			s.threatMgr.StopSync()
+		}
+		if s.icapClient != nil {
+			errs = append(errs, s.icapClient.Close())
+		}
+	})
+	if s.analysis != nil {
+		errs = append(errs, s.analysis.Close(ctx))
+	}
+	if s.httpCache != nil {
+		errs = append(errs, s.httpCache.Close())
+	}
+	if s.proxy != nil && s.proxy.Tr != nil {
+		s.proxy.Tr.CloseIdleConnections()
+	}
 	return errors.Join(errs...)
 }
 
@@ -1097,4 +1166,11 @@ func (s *Server) autocertHostPolicy(ctx context.Context, host string) error {
 		return nil
 	}
 	return fmt.Errorf("autocert: host %s not configured for auto-cert in ads-httpproxy", host)
+}
+
+func newRouteLimiter(requests int) *rate.Limiter {
+	if requests <= 0 {
+		return nil
+	}
+	return rate.NewLimiter(rate.Limit(requests), requests)
 }

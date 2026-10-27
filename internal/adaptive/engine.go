@@ -195,7 +195,12 @@ func (e *Engine) Rollback(expected, target uint64) (Snapshot, error) {
 	}
 	return Snapshot{}, fmt.Errorf("policy version not retained")
 }
-func (e *Engine) Evaluate(in Input) Decision {
+func (e *Engine) Evaluate(in Input) Decision { return e.EvaluateMany([]Input{in}) }
+
+// EvaluateMany applies rule priority across all fresh evidence, not the order
+// findings happened to complete. A later host allow cannot mask an earlier
+// classification block merely because the first finding has another category.
+func (e *Engine) EvaluateMany(inputs []Input) Decision {
 	if e == nil {
 		return Decision{Action: "allow", Reason: "adaptive filtering disabled"}
 	}
@@ -205,18 +210,20 @@ func (e *Engine) Evaluate(in Input) Decision {
 		if !r.ExpiresAt.IsZero() && !r.ExpiresAt.After(time.Now()) {
 			continue
 		}
-		if r.Tenant != "" && r.Tenant != in.Tenant || r.Host != "" && !strings.EqualFold(r.Host, in.Host) || !strings.HasPrefix(in.Path, r.PathPrefix) {
-			continue
+		for _, in := range inputs {
+			if r.Tenant != "" && r.Tenant != in.Tenant || r.Host != "" && !strings.EqualFold(r.Host, in.Host) || !strings.HasPrefix(in.Path, r.PathPrefix) {
+				continue
+			}
+			if r.Category != "" && (math.IsNaN(in.Confidence) || math.IsInf(in.Confidence, 0) || r.Category != in.Category || !in.FindingExpiresAt.After(time.Now()) || in.Confidence < r.MinConfidence) {
+				continue
+			}
+			d.RuleID = r.ID
+			d.Action = r.Action
+			d.WouldBlock = r.Action == "block"
+			d.Blocked = d.WouldBlock && s.Mode == "enforce"
+			d.Reason = "matched adaptive rule " + r.ID
+			return d
 		}
-		if r.Category != "" && (math.IsNaN(in.Confidence) || math.IsInf(in.Confidence, 0) || r.Category != in.Category || !in.FindingExpiresAt.After(time.Now()) || in.Confidence < r.MinConfidence) {
-			continue
-		}
-		d.RuleID = r.ID
-		d.Action = r.Action
-		d.WouldBlock = r.Action == "block"
-		d.Blocked = d.WouldBlock && s.Mode == "enforce"
-		d.Reason = "matched adaptive rule " + r.ID
-		return d
 	}
 	return d
 }

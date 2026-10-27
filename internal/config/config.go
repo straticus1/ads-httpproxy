@@ -469,6 +469,21 @@ func Load(path string) (*Config, error) {
 
 // LoadEnv overrides configuration from environment variables
 func (c *Config) LoadEnv() error {
+	if v := os.Getenv("ADS_API_SECRET"); v != "" {
+		c.ApiSecret = v
+	}
+	if c.Auth != nil {
+		if c.Auth.OIDC != nil {
+			if v := os.Getenv("ADS_OIDC_CLIENT_SECRET"); v != "" {
+				c.Auth.OIDC.ClientSecret = v
+			}
+		}
+		if c.Auth.OAuth2 != nil {
+			if v := os.Getenv("ADS_OAUTH2_CLIENT_SECRET"); v != "" {
+				c.Auth.OAuth2.ClientSecret = v
+			}
+		}
+	}
 	if c.Features == nil {
 		c.Features = NewConfig().Features
 	}

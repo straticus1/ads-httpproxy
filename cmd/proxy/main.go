@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -139,7 +141,7 @@ func main() {
 
 	// Run HTTP server
 	go func() {
-		if err := srv.Serve(httpListener); err != nil {
+		if err := srv.Serve(httpListener); err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
 			logging.Logger.Fatal("HTTP Server failed", zap.Error(err))
 		}
 	}()
@@ -147,7 +149,7 @@ func main() {
 	// Run SOCKS server
 	if socksSrv != nil {
 		go func() {
-			if err := socksSrv.Serve(socksListener); err != nil {
+			if err := socksSrv.Serve(socksListener); err != nil && !errors.Is(err, net.ErrClosed) {
 				logging.Logger.Fatal("SOCKS Server failed", zap.Error(err))
 			}
 		}()

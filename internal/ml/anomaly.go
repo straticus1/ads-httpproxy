@@ -11,16 +11,19 @@ import (
 
 // AnomalyMonitor tracks requests to provide real-time Z-Score anomaly detection.
 type AnomalyMonitor struct {
-	mu           sync.RWMutex
-	ipStats      map[string][]int64 // Tracks request timestamps per IP
-	windowSize   time.Duration
+	stop           chan struct{}
+	once           sync.Once
+	mu             sync.RWMutex
+	ipStats        map[string][]int64 // Tracks request timestamps per IP
+	windowSize     time.Duration
 	alertThreshold float64 // Z-Score threshold (e.g., 3.0)
 }
 
 func NewAnomalyMonitor() *AnomalyMonitor {
 	m := &AnomalyMonitor{
-		ipStats:      make(map[string][]int64),
-		windowSize:   5 * time.Minute,
+		stop:           make(chan struct{}),
+		ipStats:        make(map[string][]int64),
+		windowSize:     5 * time.Minute,
 		alertThreshold: 3.0,
 	}
 	go m.cleanupLoop()
@@ -33,14 +36,14 @@ func (m *AnomalyMonitor) Track(ip string) bool {
 	defer m.mu.Unlock()
 
 	now := time.Now().Unix()
-	
+
 	if _, exists := m.ipStats[ip]; !exists {
 		m.ipStats[ip] = []int64{now}
 		return false
 	}
-	
+
 	m.ipStats[ip] = append(m.ipStats[ip], now)
-	
+
 	// Fast-path prune (only keeping last 5 mins)
 	cutoff := now - int64(m.windowSize.Seconds())
 	var valid []int64
@@ -52,15 +55,15 @@ func (m *AnomalyMonitor) Track(ip string) bool {
 	m.ipStats[ip] = valid
 
 	// Perform basic deviation check (Z-Score approximation on volume)
-	// For production: This requires a rolling baseline, but for a simple proxy we 
+	// For production: This requires a rolling baseline, but for a simple proxy we
 	// can calculate instantaneous burst rate vs average network rate.
 	return m.checkAnomaly(ip, len(valid))
 }
 
 func (m *AnomalyMonitor) checkAnomaly(ip string, currentCount int) bool {
-	if currentCount < 50 { 
+	if currentCount < 50 {
 		// Too little data to be anomalous
-		return false 
+		return false
 	}
 
 	// Calculate system-wide mean
@@ -75,7 +78,7 @@ func (m *AnomalyMonitor) checkAnomaly(ip string, currentCount int) bool {
 	}
 
 	mean := float64(totalCounts) / float64(ips)
-	
+
 	// Calculate Standard Deviation
 	var varianceSum float64
 	for _, timestamps := range m.ipStats {
@@ -92,8 +95,8 @@ func (m *AnomalyMonitor) checkAnomaly(ip string, currentCount int) bool {
 	zScore := (float64(currentCount) - mean) / stdDev
 
 	if zScore > m.alertThreshold {
-		logging.Logger.Warn("ML Anomaly Detected: Traffic burst", 
-			zap.String("ip", ip), 
+		logging.Logger.Warn("ML Anomaly Detected: Traffic burst",
+			zap.String("ip", ip),
 			zap.Float64("z_score", zScore),
 			zap.Int("current_reqs", currentCount),
 		)
@@ -107,11 +110,16 @@ func (m *AnomalyMonitor) cleanupLoop() {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 
-	for range ticker.C {
+	for {
+		select {
+		case <-m.stop:
+			return
+		case <-ticker.C:
+		}
 		m.mu.Lock()
 		now := time.Now().Unix()
 		cutoff := now - int64(m.windowSize.Seconds())
-		
+
 		for ip, timestamps := range m.ipStats {
 			var valid []int64
 			for _, t := range timestamps {
@@ -128,3 +136,5 @@ func (m *AnomalyMonitor) cleanupLoop() {
 		m.mu.Unlock()
 	}
 }
+
+func (m *AnomalyMonitor) Close() { m.once.Do(func() { close(m.stop) }) }
