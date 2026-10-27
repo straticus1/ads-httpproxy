@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -89,7 +90,12 @@ func (sm *SessionManager) Delete(key string) {
 //     AllowedSourceNets is set only clients from those CIDRs are allowed;
 //     an empty list permits all source IPs (only safe on private interfaces).
 func NewAuthenticator(cfg *config.AuthConfig, logger *zap.Logger) (Authenticator, error) {
+	if cfg == nil {
+		return DenyAllAuthenticator{}, nil
+	}
 	switch cfg.Mechanism {
+	case "basic":
+		return NewBasicAuthenticator(cfg)
 	case "mtls":
 		return MTLSAuthenticator{}, nil
 	case "ldap":
@@ -106,13 +112,14 @@ func NewAuthenticator(cfg *config.AuthConfig, logger *zap.Logger) (Authenticator
 		return NewOAuth2Authenticator(cfg.OAuth2, logger)
 	case "saml":
 		return NewSAMLAuthenticator(cfg.SAML, logger)
-	default:
-		// mechanism = "none" (or unrecognised).
+	case "", "none":
 		if !cfg.AllowUnauthenticated {
 			// Secure default: deny everything. Operators must explicitly set
 			// allow_unauthenticated: true to open the proxy.
 			return DenyAllAuthenticator{}, nil
 		}
 		return NewOpenAuthenticator(cfg.AllowedSourceNets)
+	default:
+		return nil, fmt.Errorf("unsupported auth mechanism: %s", cfg.Mechanism)
 	}
 }

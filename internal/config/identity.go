@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"strings"
 )
 
 // IdentityURL permits plaintext only on explicit loopback development endpoints.
@@ -27,6 +28,16 @@ func ValidateIdentity(auth *AuthConfig) error {
 		return nil
 	}
 	switch auth.Mechanism {
+	case "", "none", "mtls", "ldap", "ad", "ntlm", "kerberos":
+	case "basic":
+		if len(auth.Users) == 0 {
+			return fmt.Errorf("basic auth requires local users")
+		}
+		for username, password := range auth.Users {
+			if strings.TrimSpace(username) == "" || strings.ContainsAny(username, ":\r\n\x00") || password == "" {
+				return fmt.Errorf("basic auth requires nonempty usernames/passwords and usernames without colons or controls")
+			}
+		}
 	case "oidc":
 		c := auth.OIDC
 		if c == nil || c.ClientID == "" {
@@ -68,6 +79,8 @@ func ValidateIdentity(auth *AuthConfig) error {
 		if u.RawQuery != "" || u.Path != "" && u.Path != "/" {
 			return fmt.Errorf("saml root_url must be a root origin")
 		}
+	default:
+		return fmt.Errorf("unsupported auth mechanism: %s", auth.Mechanism)
 	}
 	return nil
 }
