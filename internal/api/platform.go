@@ -30,7 +30,7 @@ func writePlatform(w http.ResponseWriter, v any) {
 func (s *Server) mountPlatform(mux *http.ServeMux) {
 	mount := func(path string, h http.HandlerFunc) {
 		mux.HandleFunc(path, s.rateLimitMiddleware(func(w http.ResponseWriter, r *http.Request) {
-			if s.cfg.ApiSecret == "" && len(s.cfg.ApiUsers) == 0 {
+			if s.cfg.ApiSecret == "" && len(s.cfg.ApiUsers) == 0 && len(s.cfg.APIKeys) == 0 {
 				http.Error(w, "Platform management requires configured API authentication", 503)
 				return
 			}
@@ -40,6 +40,9 @@ func (s *Server) mountPlatform(mux *http.ServeMux) {
 	if s.analysis != nil {
 		mount("/api/analysis/findings", s.handleFindings)
 		mount("/api/analysis/stats", s.handleAnalysisStats)
+	}
+	if s.controlPlane != nil {
+		mount("/api/control-plane/policy", s.handlePolicyBundle)
 	}
 	if s.adaptive != nil {
 		mount("/api/adaptive/policy", s.handleAdaptive)
@@ -67,7 +70,11 @@ func (s *Server) handleFindings(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = n
 	}
-	writePlatform(w, map[string]any{"findings": s.analysis.Snapshot(analysis.Filter{Tenant: r.URL.Query().Get("tenant"), Category: r.URL.Query().Get("category"), Limit: limit})})
+	tenant, ok := scopedTenant(w, r, r.URL.Query().Get("tenant"))
+	if !ok {
+		return
+	}
+	writePlatform(w, map[string]any{"findings": s.analysis.Snapshot(analysis.Filter{Tenant: tenant, Category: r.URL.Query().Get("category"), Limit: limit})})
 }
 func (s *Server) handleAnalysisStats(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "GET" {
@@ -154,6 +161,11 @@ func (s *Server) handleExplain(w http.ResponseWriter, r *http.Request) {
 	if v.Limit == 0 {
 		v.Limit = 50
 	}
+	tenant, ok := scopedTenant(w, r, v.Tenant)
+	if !ok {
+		return
+	}
+	v.Tenant = tenant
 	var findings []analysis.Finding
 	if s.analysis != nil {
 		findings = s.analysis.Snapshot(analysis.Filter{Tenant: v.Tenant, Category: v.Category, Limit: v.Limit})

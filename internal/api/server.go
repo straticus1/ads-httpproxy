@@ -20,6 +20,7 @@ import (
 	"ads-httpproxy/internal/api/ui"
 	"ads-httpproxy/internal/bandwidth"
 	"ads-httpproxy/internal/config"
+	"ads-httpproxy/internal/controlplane"
 	"ads-httpproxy/internal/devtools"
 	"ads-httpproxy/internal/pac"
 	"ads-httpproxy/internal/plugin"
@@ -32,6 +33,7 @@ import (
 
 // Server represents the Admin API server.
 type Server struct {
+	controlPlane   *controlplane.Manager
 	analysis       *analysis.Manager
 	adaptive       *adaptive.Engine
 	revokeIdentity func(string) int
@@ -81,7 +83,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/connections", s.rateLimitMiddleware(s.authMiddleware(s.handleConnections)))
 	mux.HandleFunc("/config", s.rateLimitMiddleware(s.authMiddleware(s.handleConfig)))
 	mux.HandleFunc("/healthz", s.handleHealth)
-	mux.Handle("/metrics", promhttp.Handler())
+	if len(s.cfg.APIKeys) > 0 {
+		mux.HandleFunc("/metrics", s.authMiddleware(promhttp.Handler().ServeHTTP))
+	} else {
+		mux.Handle("/metrics", promhttp.Handler())
+	}
 
 	// Plugin endpoints
 	mux.HandleFunc("/plugins", s.rateLimitMiddleware(s.authMiddleware(s.handlePluginsList)))
@@ -111,7 +117,17 @@ func (s *Server) Handler() http.Handler {
 	})
 
 	pacHandler := pac.NewHandler(s.cfg.Addr)
-	mux.Handle("/proxy.pac", pacHandler)
+	if len(s.cfg.APIKeys) > 0 {
+		mux.HandleFunc("/proxy.pac", func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Query().Get("tenant") != "" || r.URL.Query().Get("user") != "" || r.Header.Get("X-Tenant-ID") != "" || r.Header.Get("X-User-ID") != "" || r.Header.Get("Authorization") != "" {
+				http.Error(w, "Public PAC serves only the default policy", http.StatusForbidden)
+				return
+			}
+			pacHandler.ServeHTTP(w, r)
+		})
+	} else {
+		mux.Handle("/proxy.pac", pacHandler)
+	}
 	if s.cfg.PAC != nil {
 		host, portString, err := net.SplitHostPort(s.cfg.Addr)
 		port, _ := strconv.Atoi(portString)
@@ -306,7 +322,10 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			zap.String("remote_addr", r.RemoteAddr),
 		)
 
-		if s.cfg.ApiSecret == "" && len(s.cfg.ApiUsers) == 0 {
+		if s.scopedAuthentication(w, r, next) {
+			return
+		}
+		if s.cfg.ApiSecret == "" && len(s.cfg.ApiUsers) == 0 && len(s.cfg.APIKeys) == 0 {
 			next(w, r)
 			return
 		}
