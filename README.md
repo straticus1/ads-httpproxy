@@ -537,3 +537,10 @@ For issues, questions, or contributions, please open an issue on GitHub.
 - [Scripting cookbook](docs/scripting-cookbook.md)
 - [MITM CA setup](docs/mitm.md)
 - [Troubleshooting](docs/troubleshooting.md)
+
+### Engine compatibility and cloud foundations
+
+- [Squid migration subset](docs/squid-compatibility.md): strict conversion with executable ACL fixtures.
+- [Protocol validation and benchmark harness](docs/protocol-validation.md): tested paths and explicit limits.
+- [Versioned policy decisions](docs/policy-contract.md): verified inputs and atomic publication.
+- [Cloud engine boundaries](docs/cloud-engine.md): signed releases and scoped tenant API keys.

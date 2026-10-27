@@ -90,6 +90,8 @@ For tenant readers, generate a high-entropy key and store only its SHA-256 hex
 digest in configuration. Keep the raw credential with its client:
 
 ```yaml
+api_addr: "127.0.0.1:9090"
+api_secret: "" # Or configure a distinct, strong global administrator secret.
 api_keys:
   - id: tenant-a-reader
     sha256: HEX_SHA256_OF_RANDOM_CREDENTIAL

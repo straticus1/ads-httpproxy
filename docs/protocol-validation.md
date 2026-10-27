@@ -12,6 +12,9 @@ The protocol fixtures use real loopback sockets and exercise:
 - HTTP/2 TLS negotiation at the gateway, immediate SSE delivery, and cancellation
   reaching the HTTP upstream.
 - CONNECT rejection before TLS interception for unauthenticated callers.
+- Opaque TCP tunneling without CA files, policy rejection before dialing, and TCP half-close behavior.
+- Shutdown closes client and upstream CONNECT sockets, cancels context-aware pending dials, and rejects new tunnels.
+- Configured parent CONNECT routing, operator credential isolation, verified HTTPS parents and bounded response headers.
 - Authenticated HTTPS CONNECT with OAuth2 introspection, verified upstream TLS,
   identity propagation into decrypted requests, and no proxy credential leakage.
 - HTTP/1 WebSocket upgrade, masked client/unmasked server frame forwarding, and
@@ -29,6 +32,10 @@ The authenticated CONNECT fixture skips verification only on its test client
 connection to the ephemeral interception CA. The proxy verifies the upstream
 fixture certificate against an explicit trust pool. Production clients should
 trust the configured interception CA; do not disable their TLS verification.
+
+Active WebSocket upgrades are still outside CONNECT shutdown ownership. Closing
+the client is covered; process-wide WebSocket draining remains open. Legacy
+custom CONNECT dialers without context must supply their own timeouts.
 
 ## Load harness
 

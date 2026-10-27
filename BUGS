@@ -30,11 +30,15 @@ Plugin and scripting examples now exist in `docs/` and `examples/`.
 
 2. **SOCKS Connection Draining**: Graceful shutdown closes the SOCKS5 listener (stopping new connections) but does not drain active connections. The `go-socks5` library does not expose a drain mechanism.
 
-3. **Process-local state**: Browser sessions/revocation, posture caches, and request budgets are local to one process. Management authentication provides cross-tenant administrative access, not tenant-scoped RBAC.
+3. **Process-local state**: Browser sessions/revocation, posture caches, and request budgets are local to one process. Global administrator credentials remain cross-tenant. Scoped keys now restrict findings/explanations to one tenant; full resource RBAC and distributed quotas are not implemented.
 
 4. **Analysis durability and privacy**: Completed findings have an optional durable journal, but queued work does not survive a crash. Body previews are opt-in; credential-pattern redaction is not general PII anonymization.
 
 5. **Protocol visibility**: Content analysis and AI model controls require visible HTTP. Opaque tunnels and UDP/QUIC relays do not provide application-content inspection. Live IdP certification and vendor-native AI adapters remain future work.
+
+6. **WebSocket shutdown**: Client disconnect propagation is tested, but active upgraded WebSocket connections are not yet tracked for process-wide drain. CONNECT sockets are tracked and closed.
+
+7. **Compatibility evidence**: Strict Squid conversion supports a documented ACL subset; live differential tests and comparative capacity measurements remain open.
 
 ## Reporting Bugs
 

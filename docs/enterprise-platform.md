@@ -236,8 +236,9 @@ count requests, not tokens or monetary cost, and reset with the process.
 ## Management API
 
 These routes require management authentication (`X-API-Key` or configured Basic
-users). The management credential has cross-tenant administrative access;
-`tenant` is a query filter, not tenant-scoped RBAC.
+users). Global administrator credentials have cross-tenant access. Optional scoped API
+keys restrict findings/explanations to their configured tenant and reject
+conflicting tenant selectors; see [cloud engine boundaries](cloud-engine.md).
 
 | Method and path | Purpose |
 | --- | --- |
@@ -278,3 +279,28 @@ integration coverage. See [TODO](../TODO) and [BUGS](../BUGS).
 
 See [Policy language direction](policy-languages.md) for CEL, scripting, and the
 proposed optional OPA/Rego integration.
+
+## Engine milestone follow-up
+
+`connect_mode: tunnel` provides opaque CONNECT forwarding after admission checks;
+`connect_mode: mitm` (also the legacy default when omitted) intercepts TLS using
+the configured/generated CA. Tunnel mode does not inspect encrypted content and
+does not need a CA. HTTP/2 CONNECT is currently rejected with 501.
+
+Local explicit proxy Basic authentication is now implemented:
+
+```yaml
+auth:
+  mechanism: basic
+  users:
+    proxy-user: REPLACE_WITH_SECRET
+```
+
+It consumes only `Proxy-Authorization`; application `Authorization` is preserved.
+Use TLS on the client-to-proxy link to protect Basic credentials. Configuration
+contains plaintext secrets; in-memory comparison hashes are not a password vault.
+Unknown authentication mechanisms are rejected even with unauthenticated access
+otherwise enabled. This does not implement browser Basic login for the gateway.
+
+[Cloud engine boundaries](cloud-engine.md) documents signed CEL releases and
+scoped tenant credentials, which extend the original administrator-only API model.

@@ -195,3 +195,22 @@ See `docs/admin-cli.md` for commands, authentication, batch files, and completio
 - [ ] GUI/Web interface for management (read-only traffic dashboard exists at /ui/; full management UI pending)
 - [ ] Mobile app for monitoring
 - [ ] Blockchain-based audit trail
+
+## Engine/cloud milestone follow-up (2026-10-27)
+- [x] Replace approximate Squid conversion with strict supported-subset validation and executable CEL fixtures
+- [x] Implement actual CIDR, destination hostname/port policy attributes, and versioned decision obligations
+- [x] Reject unsupported auth mechanisms; implement explicit proxy Basic credentials
+- [x] Authenticate CONNECT before MITM/tunneling; preserve verified inner identity and expiry
+- [x] Add explicit opaque CONNECT mode, HTTP/2 CONNECT rejection and tracked CONNECT shutdown
+- [ ] Track active WebSocket upgrades for process shutdown
+- [x] Add gateway HTTP/2 streaming, cancellation, WebSocket and CONNECT protocol regressions
+- [x] Add bounded load harness with throughput, latency percentiles and client-memory labels
+- [x] Add signed, audience-bound CEL release installation, persistence and restart replay checks
+- [x] Add tenant-scoped findings/explanation keys; restrict public PAC selectors when enabled
+- [ ] Run differential migration fixtures against supported Squid versions (not just CEL expectations)
+- [ ] Measure proxy RSS/connection and comparative sustained load on representative hardware
+- [ ] Expand ICAP/SOCKS, direct HTTP/2 interception and fault-injection coverage
+- [ ] Complete fleet enrollment, staged distribution, health gating and audit export
+- [ ] Implement distributed quotas/sessions and per-tenant retention/resource reservations
+- [ ] Define ingress versus post-rewrite egress policy stages and test script/route composition
+- [ ] Add optional OPA/Rego adapter only after the shared stage contract is stable

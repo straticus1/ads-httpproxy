@@ -3,7 +3,7 @@
   "info": {
     "title": "ADS HTTP Proxy Management API",
     "version": "1.0.0",
-    "description": "API keys and configured Basic users are alternatives. Public health/metrics/PAC/dashboard routes are unauthenticated. Optional cache and developer routes return 404 when not mounted. Error bodies are plain text. Configuration mutation is disabled. Platform endpoints require configured administrator authentication and are mounted only when their feature is enabled. See enterprise-platform.md for operational limits."
+    "description": "API keys and configured Basic users are alternatives. Public health/metrics/PAC/dashboard routes are unauthenticated. Optional cache and developer routes return 404 when not mounted. Error bodies are plain text. Configuration mutation is disabled. Platform endpoints require configured administrator authentication and are mounted only when their feature is enabled. See enterprise-platform.md for operational limits. Signed-policy delivery requires global administration plus a trusted signature. Scoped API keys permit only their tenant findings/explanations. With scoped keys configured, metrics require global administration and public PAC rejects tenant/user selectors."
   },
   "servers": [
     {
@@ -860,6 +860,9 @@
           },
           "503": {
             "description": "API authentication not configured"
+          },
+          "403": {
+            "description": "Credential scope or tenant mismatch"
           }
         },
         "parameters": [
@@ -887,7 +890,8 @@
               "default": 100
             }
           }
-        ]
+        ],
+        "description": "Global administrators may select any tenant. Scoped API credentials are bound to their configured tenant; omitted tenant selects that tenant and conflicting tenant returns 403."
       }
     },
     "/api/analysis/stats": {
@@ -1219,6 +1223,9 @@
           },
           "502": {
             "description": "Configured explanation provider failed"
+          },
+          "403": {
+            "description": "Credential scope or tenant mismatch"
           }
         },
         "requestBody": {
@@ -1249,7 +1256,8 @@
               }
             }
           }
-        }
+        },
+        "description": "Global administrators may select any tenant. Scoped API credentials are bound to their configured tenant; omitted tenant selects that tenant and conflicting tenant returns 403."
       }
     },
     "/api/identity/revoke": {
@@ -1302,6 +1310,73 @@
                 ]
               }
             }
+          }
+        }
+      }
+    },
+    "/api/control-plane/policy": {
+      "get": {
+        "summary": "Read installed signed-policy revision and staleness",
+        "responses": {
+          "200": {
+            "description": "Policy release status"
+          },
+          "401": {
+            "description": "Global administrator authentication required"
+          },
+          "403": {
+            "description": "Scoped credentials cannot administer policy"
+          },
+          "409": {
+            "description": "Signature, audience, revision, validity, compilation or persistence rejected"
+          }
+        }
+      },
+      "put": {
+        "summary": "Install signed CEL release atomically",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "key_id",
+                  "payload",
+                  "signature"
+                ],
+                "properties": {
+                  "key_id": {
+                    "type": "string"
+                  },
+                  "payload": {
+                    "type": "string",
+                    "format": "byte",
+                    "description": "Base64 release JSON bytes"
+                  },
+                  "signature": {
+                    "type": "string",
+                    "format": "byte",
+                    "description": "Base64 Ed25519 signature with ads-policy-bundle/v1 domain separation"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Policy release status"
+          },
+          "401": {
+            "description": "Global administrator authentication required"
+          },
+          "403": {
+            "description": "Scoped credentials cannot administer policy"
+          },
+          "409": {
+            "description": "Signature, audience, revision, validity, compilation or persistence rejected"
           }
         }
       }

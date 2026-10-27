@@ -37,3 +37,15 @@ not a claim of Squid compatibility, production certification, or cloud readiness
 
 See docs/policy-languages.md for the language decision and
  docs/enterprise-platform.md for current behavior and limitations.
+
+## Engine milestone delivered
+
+Strict migration subset and executable fixtures; versioned CEL decision contract;
+Basic proxy auth and CONNECT admission fixes; explicit opaque tunnel mode;
+HTTP/2 gateway/stream/WebSocket/CONNECT tests; bounded load harness; signed policy
+push with last-known-good restoration; tenant-scoped management readers.
+
+These are concrete foundations for steps 1–5 above. Compatibility still needs
+live Squid differential tests; performance still needs comparative runs. Fleet
+enrollment/rollouts, distributed state, full per-tenant resource isolation and
+billing-grade usage accounting remain open. See TODO for executable next work.
