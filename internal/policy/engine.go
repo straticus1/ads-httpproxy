@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -21,22 +22,25 @@ import (
 
 // Policy represents a single access control rule
 type Policy struct {
-	ID        string      `yaml:"id"`
-	Effect    string      `yaml:"effect"` // "allow", "block", "log"
-	Condition string      `yaml:"condition"`
-	Actions   []string    `yaml:"actions"` // Additional actions e.g., "rate_limit", "redact_headers"
-	Program   cel.Program `yaml:"-"`
+	ID        string      `yaml:"id" json:"id"`
+	Effect    string      `yaml:"effect" json:"effect"` // "allow", "block", "log"
+	Condition string      `yaml:"condition" json:"condition"`
+	Actions   []string    `yaml:"actions" json:"actions,omitempty"` // Additional actions e.g., "rate_limit", "redact_headers"
+	Program   cel.Program `yaml:"-" json:"-"`
 }
 
 // EvalContext defines the data available to CEL expressions
 type EvalContext struct {
-	Request ClientRequest `json:"request"`
-	Client  ClientInfo    `json:"client"`
-	User    UserInfo      `json:"user"`
-	Time    TimeInfo      `json:"time"`
+	ValidationError string        `json:"-"`
+	Request         ClientRequest `json:"request"`
+	Client          ClientInfo    `json:"client"`
+	User            UserInfo      `json:"user"`
+	Time            TimeInfo      `json:"time"`
 }
 
 type ClientRequest struct {
+	Hostname string            `json:"hostname"`
+	Port     int               `json:"port"`
 	Method   string            `json:"method"`
 	URL      string            `json:"url"`
 	Host     string            `json:"host"`
@@ -74,6 +78,7 @@ type TimeInfo struct {
 
 // Engine manages policies and evaluation
 type Engine struct {
+	version      uint64
 	defaultBlock bool
 	env          *cel.Env
 	policies     []*Policy
@@ -85,6 +90,7 @@ type Engine struct {
 func NewEngine() (*Engine, error) {
 	// Define CEL environment with context variables
 	env, err := cel.NewEnv(
+		CIDREnvOption(),
 		cel.Declarations(
 			decls.NewVar("request", decls.NewMapType(decls.String, decls.Dyn)),
 			decls.NewVar("client", decls.NewMapType(decls.String, decls.Dyn)),
@@ -121,84 +127,107 @@ func (e *Engine) LoadFromFile(path string) error {
 	if err != nil {
 		return fmt.Errorf("read policy file: %w", err)
 	}
-	var document struct {
-		Policies []*Policy `yaml:"policies"`
-	}
-	if err := yaml.Unmarshal(data, &document); err != nil {
+	var node yaml.Node
+	if err := yaml.Unmarshal(data, &node); err != nil {
 		return fmt.Errorf("parse policy file: %w", err)
 	}
-	policies := document.Policies
-	if policies == nil {
-		if err := yaml.Unmarshal(data, &policies); err != nil {
-			return fmt.Errorf("parse policy list: %w", err)
-		}
+	if len(node.Content) != 1 {
+		return fmt.Errorf("empty policy document")
 	}
+	var policies []*Policy
+	if node.Content[0].Kind == yaml.SequenceNode {
+		if err := node.Decode(&policies); err != nil {
+			return err
+		}
+	} else {
+		var document struct {
+			Policies []*Policy `yaml:"policies"`
+		}
+		if err := node.Decode(&document); err != nil {
+			return err
+		}
+		if document.Policies == nil {
+			return fmt.Errorf("policy document requires policies")
+		}
+		policies = document.Policies
+	}
+	snapshot := e.Snapshot()
+	_, err = e.Replace(snapshot.Version, policies, snapshot.DefaultEffect)
+	return err
+}
+
+func (e *Engine) compile(policies []*Policy) ([]*Policy, error) {
+	seen := make(map[string]bool)
 	compiled := make([]*Policy, 0, len(policies))
 	for index, item := range policies {
 		if item == nil || strings.TrimSpace(item.ID) == "" || strings.TrimSpace(item.Condition) == "" {
-			return fmt.Errorf("policy %d requires id and condition", index)
+			return nil, fmt.Errorf("policy %d requires id and condition", index)
 		}
 		switch strings.ToLower(item.Effect) {
 		case "allow", "block", "log":
 		default:
-			return fmt.Errorf("policy %q has unsupported effect %q", item.ID, item.Effect)
+			return nil, fmt.Errorf("policy %q has unsupported effect %q", item.ID, item.Effect)
 		}
-		for _, action := range item.Actions {
-			name, arg, _ := strings.Cut(action, ":")
-			switch name {
-			case "rate_limit":
-				n, err := strconv.Atoi(arg)
-				if err != nil || n < 1 || n > 100000 {
-					return fmt.Errorf("invalid rate_limit action")
-				}
-			case "redact_headers":
-				if arg == "" {
-					return fmt.Errorf("redact_headers requires header names")
-				}
-				for _, h := range strings.Split(arg, ",") {
-					h = strings.TrimSpace(h)
-					if h == "" || strings.ContainsAny(h, " \r\n:") {
-						return fmt.Errorf("invalid header action")
-					}
-				}
-			default:
-				return fmt.Errorf("unsupported policy action %q", action)
-			}
+		if seen[item.ID] {
+			return nil, fmt.Errorf("duplicate policy id %q", item.ID)
+		}
+		seen[item.ID] = true
+		if _, err := parseObligations(item.Actions); err != nil {
+			return nil, fmt.Errorf("policy %q: %w", item.ID, err)
 		}
 		ast, issues := e.env.Compile(item.Condition)
 		if issues != nil && issues.Err() != nil {
-			return fmt.Errorf("compile policy %q: %w", item.ID, issues.Err())
+			return nil, fmt.Errorf("compile policy %q: %w", item.ID, issues.Err())
 		}
 		if ast.OutputType().String() != "bool" {
-			return fmt.Errorf("policy %q condition must return bool", item.ID)
+			return nil, fmt.Errorf("policy %q condition must return bool", item.ID)
 		}
 		program, err := e.env.Program(ast, cel.CostLimit(10000), cel.InterruptCheckFrequency(100))
 		if err != nil {
-			return fmt.Errorf("create policy %q: %w", item.ID, err)
+			return nil, fmt.Errorf("create policy %q: %w", item.ID, err)
 		}
 		copy := *item
 		copy.Program = program
+		copy.Effect = strings.ToLower(item.Effect)
+		copy.Actions = append([]string(nil), item.Actions...)
 		compiled = append(compiled, &copy)
 	}
-	e.mu.Lock()
-	e.policies = compiled
-	e.mu.Unlock()
-	return nil
+	return compiled, nil
 }
 
 // Evaluate checks all policies against the context
 // Returns: allowed (bool), matched (bool), actions ([]string), reason (string)
-func (e *Engine) Evaluate(ctx context.Context, evalCtx *EvalContext) (bool, bool, []string, string) {
+func (e *Engine) Decide(ctx context.Context, evalCtx *EvalContext) Decision {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
+	decision := Decision{SchemaVersion: "v1", PolicyVersion: e.version, Effect: "block"}
+	if evalCtx == nil {
+		decision.Reason = "Invalid policy input"
+		return decision
+	}
+	if evalCtx.ValidationError != "" {
+		decision.Reason = "Invalid policy input"
+		return decision
+	}
+	if ctx.Err() != nil {
+		decision.Reason = "Policy evaluation canceled"
+		return decision
+	}
 	// 1. Get from Pool
 	input := e.pool.Get().(map[string]interface{})
-	defer e.pool.Put(input)
+	defer func() {
+		for _, value := range input {
+			clear(value.(map[string]interface{}))
+		}
+		e.pool.Put(input)
+	}()
 
 	// 2. Populate (Safe reuse of maps)
 	reqMap := input["request"].(map[string]interface{})
 	reqMap["method"] = evalCtx.Request.Method
+	reqMap["hostname"] = evalCtx.Request.Hostname
+	reqMap["port"] = evalCtx.Request.Port
 	reqMap["url"] = evalCtx.Request.URL
 	reqMap["host"] = evalCtx.Request.Host
 	reqMap["path"] = evalCtx.Request.Path
@@ -235,7 +264,8 @@ func (e *Engine) Evaluate(ctx context.Context, evalCtx *EvalContext) (bool, bool
 		out, _, err := p.Program.ContextEval(ctx, input)
 		if err != nil {
 			logging.Logger.Warn("Policy evaluation error", zap.String("id", p.ID), zap.Error(err))
-			return false, true, nil, "Policy evaluation failed: " + p.ID
+			decision.PolicyID, decision.Matched, decision.Reason = p.ID, true, "Policy evaluation failed: "+p.ID
+			return decision
 		}
 
 		if matched, ok := out.Value().(bool); ok && matched {
@@ -246,27 +276,47 @@ func (e *Engine) Evaluate(ctx context.Context, evalCtx *EvalContext) (bool, bool
 			logging.Logger.Debug("Policy Matched", zap.String("id", p.ID), zap.String("effect", p.Effect))
 
 			if strings.EqualFold(p.Effect, "block") {
-				return false, true, p.Actions, fmt.Sprintf("Blocked by policy %s", p.ID)
+				return policyDecision(e.version, p, "Blocked by policy "+p.ID)
 			}
 
-			// If allowed, we might continue to see if any block rule triggers later?
-			// Usually "First Match" or "Deny Overrides".
-			// Let's implement Deny Overrides / Block Priority.
-			// Currently iterating: if Block -> Return immediately.
-			// If Allow -> Continue? Or Return?
-			// Simplest: First Match.
-			return true, true, p.Actions, fmt.Sprintf("Allowed by policy %s", p.ID)
+			return policyDecision(e.version, p, "Allowed by policy "+p.ID)
 		}
 	}
 
 	// No policy matched -> Default Allow (or should be Block?)
 	// Usually proxy is Default Allow unless blocked.
-	return !e.defaultBlock, false, nil, "No policy matched"
+	decision.Reason = "No policy matched"
+	if !e.defaultBlock {
+		decision.Effect = "allow"
+	}
+	return decision
 }
 
 // Helper to construct context from HTTP Request
 func NewEvalContext(req *http.Request, username string, group string) *EvalContext {
 	host := req.Host
+	authority := req.Host
+	if req.URL.IsAbs() {
+		authority = req.URL.Host
+	}
+	destination, parseErr := url.Parse("//" + authority)
+	hostname, port := "", 80
+	if req.URL.Scheme == "https" || req.Method == http.MethodConnect {
+		port = 443
+	}
+	validationError := ""
+	if parseErr != nil || destination.Hostname() == "" || destination.User != nil || destination.Path != "" || destination.RawQuery != "" || destination.Fragment != "" {
+		validationError = "invalid destination authority"
+	} else {
+		hostname = strings.TrimSuffix(strings.ToLower(destination.Hostname()), ".")
+		if explicit := destination.Port(); explicit != "" {
+			var err error
+			port, err = strconv.Atoi(explicit)
+			if err != nil || port < 1 || port > 65535 {
+				validationError = "invalid destination port"
+			}
+		}
+	}
 	// Helper to get Year/Month/etc
 	now := time.Now()
 
@@ -284,8 +334,11 @@ func NewEvalContext(req *http.Request, username string, group string) *EvalConte
 
 	clientIP, clientPort, _ := net.SplitHostPort(req.RemoteAddr)
 	return &EvalContext{
-		Client: ClientInfo{IP: clientIP, Port: clientPort},
+		ValidationError: validationError,
+		Client:          ClientInfo{IP: clientIP, Port: clientPort},
 		Request: ClientRequest{
+			Hostname: hostname,
+			Port:     port,
 			Method:   req.Method,
 			URL:      req.URL.String(),
 			Host:     host,
@@ -312,5 +365,9 @@ func NewEvalContext(req *http.Request, username string, group string) *EvalConte
 func (e *Engine) SetDefaultEffect(effect string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.defaultBlock = effect == "" || effect == "block"
+	block := effect != "allow"
+	if e.defaultBlock != block {
+		e.defaultBlock = block
+		e.version++
+	}
 }
