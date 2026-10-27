@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -41,4 +42,14 @@ func TestHandleConfigRejectsUnsafeLiveReplacement(t *testing.T) {
 
 	require.Equal(t, http.StatusNotImplemented, rec.Code)
 	require.Equal(t, ":8080", cfg.Addr)
+}
+
+func TestConfigRedactsSecretsInsideArrays(t *testing.T) {
+	cfg := config.NewConfig()
+	cfg.Plugins = &config.PluginConfig{Configurations: map[string]any{"example": []any{map[string]any{"password": "nested-secret", "children": []any{map[string]any{"api_key": "nested-key"}}}}}}
+	value, err := redactedConfig(cfg)
+	require.NoError(t, err)
+	require.NotContains(t, fmt.Sprint(value), "nested-secret")
+	require.NotContains(t, fmt.Sprint(value), "nested-key")
+	require.Contains(t, fmt.Sprint(value), "[REDACTED]")
 }

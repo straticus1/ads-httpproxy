@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -50,5 +51,23 @@ func TestInvalidOptions(t *testing.T) {
 		if err := run(args, &bytes.Buffer{}); err == nil {
 			t.Fatalf("expected error: %v", args)
 		}
+	}
+}
+
+func TestCapturesForwardsFiltersAndHARFormat(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/devtools/exchanges" || r.URL.Query().Get("format") != "har" || r.URL.Query().Get("host") != "example.test:443" || r.URL.Query().Get("method") != "POST" || r.URL.Query().Get("status") != "201" || r.URL.Query().Get("limit") != "5" {
+			t.Errorf("unexpected request %s", r.URL)
+		}
+		io.WriteString(w, `{"log":{"version":"1.2","entries":[]}}`)
+	}))
+	defer api.Close()
+	var output bytes.Buffer
+	err := run([]string{"captures", "-api", api.URL, "-format", "har", "-host", "example.test:443", "-method", "POST", "-status", "201", "-limit", "5"}, &output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), `"version":"1.2"`) {
+		t.Fatal(output.String())
 	}
 }

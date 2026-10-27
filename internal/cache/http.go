@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -22,16 +21,16 @@ import (
 
 // CachedResponse represents a cached HTTP response
 type CachedResponse struct {
-	StatusCode     int               `json:"status_code"`
-	Headers        map[string]string `json:"headers"`
-	Body           []byte            `json:"body"`
-	BodyCompressed bool              `json:"body_compressed"`
-	ETag           string            `json:"etag"`
-	LastModified   string            `json:"last_modified"`
-	CachedAt       time.Time         `json:"cached_at"`
-	TTL            time.Duration     `json:"ttl"`
-	ContentType    string            `json:"content_type"`
-	Size           int               `json:"size"`
+	StatusCode     int           `json:"status_code"`
+	Headers        http.Header   `json:"headers"`
+	Body           []byte        `json:"body"`
+	BodyCompressed bool          `json:"body_compressed"`
+	ETag           string        `json:"etag"`
+	LastModified   string        `json:"last_modified"`
+	CachedAt       time.Time     `json:"cached_at"`
+	TTL            time.Duration `json:"ttl"`
+	ContentType    string        `json:"content_type"`
+	Size           int           `json:"size"`
 }
 
 // CacheStats tracks cache performance metrics
@@ -71,7 +70,7 @@ type CacheConfig struct {
 	MinSizeBytes    int64
 	MaxSizeBytes    int64
 	CompressBody    bool
-	CachePrivate    bool // Cache responses with Cache-Control: private
+	CachePrivate    bool // Deprecated: shared caches always bypass private responses.
 }
 
 // NewHTTPCache creates a new HTTP cache manager
@@ -120,7 +119,7 @@ func DefaultCacheConfig() *CacheConfig {
 
 // Get retrieves a cached response
 func (hc *HTTPCache) Get(req *http.Request) (*CachedResponse, bool) {
-	if hc == nil || !hc.config.Enabled {
+	if hc == nil || !hc.config.Enabled || !cacheableRequest(req) {
 		return nil, false
 	}
 
@@ -130,7 +129,7 @@ func (hc *HTTPCache) Get(req *http.Request) (*CachedResponse, bool) {
 	if hc.memory != nil {
 		if data, ok := hc.memory.Get(key); ok {
 			cached := &CachedResponse{}
-			if err := json.Unmarshal(data, cached); err == nil {
+			if err := json.Unmarshal(data, cached); err == nil && time.Now().Before(cached.CachedAt.Add(cached.TTL)) {
 				atomic.AddUint64(&hc.stats.L1Hits, 1)
 				atomic.AddUint64(&hc.stats.BytesSaved, uint64(cached.Size))
 				logging.Logger.Debug("Cache L1 HIT", zap.String("key", key))
@@ -143,10 +142,10 @@ func (hc *HTTPCache) Get(req *http.Request) (*CachedResponse, bool) {
 	if hc.redis != nil {
 		if data, ok := hc.redis.Get(key); ok {
 			cached := &CachedResponse{}
-			if err := json.Unmarshal(data, cached); err == nil {
+			if err := json.Unmarshal(data, cached); err == nil && time.Now().Before(cached.CachedAt.Add(cached.TTL)) {
 				// Promote to L1
 				if hc.memory != nil {
-					hc.memory.Set(key, data, hc.config.MemoryMaxTTL)
+					hc.memory.Set(key, data, time.Until(cached.CachedAt.Add(cached.TTL)))
 				}
 
 				atomic.AddUint64(&hc.stats.L2Hits, 1)
@@ -174,7 +173,11 @@ func (hc *HTTPCache) Set(req *http.Request, resp *http.Response) error {
 	}
 
 	key := hc.GenerateKey(req)
+	cachedAt := time.Now()
 	ttl := hc.CalculateTTL(resp)
+	if ttl <= 0 || resp.Body == nil || resp.ContentLength < 0 || resp.ContentLength > hc.config.MaxSizeBytes {
+		return nil
+	}
 
 	// Read at most one byte beyond the cache limit. If the response is too
 	// large, put the consumed prefix back in front of the original stream so
@@ -187,6 +190,7 @@ func (hc *HTTPCache) Set(req *http.Request, resp *http.Response) error {
 	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
 		atomic.AddUint64(&hc.stats.Errors, 1)
+		resp.Body = &prefixReadCloser{Reader: io.MultiReader(bytes.NewReader(body), failedReader{err}), closer: resp.Body}
 		return err
 	}
 	if int64(len(body)) > hc.config.MaxSizeBytes {
@@ -226,12 +230,12 @@ func (hc *HTTPCache) Set(req *http.Request, resp *http.Response) error {
 	// Create cached response
 	cached := &CachedResponse{
 		StatusCode:     resp.StatusCode,
-		Headers:        flattenHeaders(resp.Header),
+		Headers:        resp.Header.Clone(),
 		Body:           bodyToStore,
 		BodyCompressed: bodyCompressed,
 		ETag:           resp.Header.Get("ETag"),
 		LastModified:   resp.Header.Get("Last-Modified"),
-		CachedAt:       time.Now(),
+		CachedAt:       cachedAt,
 		TTL:            ttl,
 		ContentType:    resp.Header.Get("Content-Type"),
 		Size:           int(size),
@@ -286,14 +290,21 @@ func (cr *CachedResponse) ToResponse(req *http.Request) *http.Response {
 	}
 
 	// Build headers
-	headers := make(http.Header)
-	for k, v := range cr.Headers {
-		headers.Set(k, v)
+	headers := cr.Headers.Clone()
+	if headers == nil {
+		headers = make(http.Header)
 	}
 
 	// Add cache metadata
 	headers.Set("X-Cache", "HIT")
-	headers.Set("Age", fmt.Sprintf("%d", int(time.Since(cr.CachedAt).Seconds())))
+	age := time.Since(cr.CachedAt)
+	if value, err := strconv.ParseInt(headers.Get("Age"), 10, 64); err == nil && value > 0 && value < int64((1<<63-1)/int64(time.Second)) {
+		age += time.Duration(value) * time.Second
+	}
+	if date, err := http.ParseTime(headers.Get("Date")); err == nil && time.Since(date) > age {
+		age = time.Since(date)
+	}
+	headers.Set("Age", strconv.FormatInt(int64(age/time.Second), 10))
 	headers.Set("X-Cache-Lookup", "HIT")
 
 	return &http.Response{
@@ -308,155 +319,135 @@ func (cr *CachedResponse) ToResponse(req *http.Request) *http.Response {
 	}
 }
 
-// CheckConditional checks if request can be satisfied with 304 Not Modified
-func (cr *CachedResponse) CheckConditional(req *http.Request) bool {
-	// If-None-Match (ETag)
-	if inm := req.Header.Get("If-None-Match"); inm != "" && cr.ETag != "" {
-		if inm == cr.ETag || inm == "*" {
-			return true
-		}
-	}
-
-	// If-Modified-Since
-	if ims := req.Header.Get("If-Modified-Since"); ims != "" && cr.LastModified != "" {
-		imsTime, err := http.ParseTime(ims)
-		if err == nil {
-			lmTime, err := http.ParseTime(cr.LastModified)
-			if err == nil && !lmTime.After(imsTime) {
-				return true
-			}
-		}
-	}
-
-	return false
-}
-
-// IsCacheable determines if a response should be cached
-func (hc *HTTPCache) IsCacheable(req *http.Request, resp *http.Response) bool {
-	// Only cache GET and HEAD
-	if req.Method != "GET" && req.Method != "HEAD" {
+// cacheableRequest deliberately bypasses requests needing identity-specific,
+// range, or revalidation semantics that this shared cache does not implement.
+func cacheableRequest(req *http.Request) bool {
+	if req.Method != http.MethodGet && req.Method != http.MethodHead {
 		return false
 	}
-
-	// Only cache successful responses
-	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
+	if user := req.Header.Get("X-Authenticated-User"); user != "" && user != "anonymous" {
 		return false
 	}
-
-	// Check Cache-Control directives
-	cc := parseCacheControl(resp.Header.Get("Cache-Control"))
-
-	// Never cache no-store
-	if _, noStore := cc["no-store"]; noStore {
+	if req.URL.User != nil || (req.Body != nil && req.Body != http.NoBody) {
 		return false
 	}
-
-	// Don't cache private unless configured
-	if _, private := cc["private"]; private && !hc.config.CachePrivate {
-		return false
-	}
-
-	// Don't cache if Pragma: no-cache
-	if resp.Header.Get("Pragma") == "no-cache" {
-		return false
-	}
-
-	// Don't cache responses with Set-Cookie (user-specific)
-	if resp.Header.Get("Set-Cookie") != "" {
-		return false
-	}
-
-	// Don't cache if Authorization header present (unless explicitly public)
-	if req.Header.Get("Authorization") != "" {
-		if _, public := cc["public"]; !public {
+	for _, h := range []string{"Authorization", "Proxy-Authorization", "Cookie", "Range", "If-Range", "If-None-Match", "If-Modified-Since", "If-Match", "If-Unmodified-Since"} {
+		if req.Header.Get(h) != "" {
 			return false
 		}
 	}
+	cc := parseCacheControl(strings.Join(req.Header.Values("Cache-Control"), ","))
+	for _, d := range []string{"no-cache", "no-store", "max-age", "min-fresh"} {
+		if _, ok := cc[d]; ok {
+			return false
+		}
+	}
+	return !strings.EqualFold(req.Header.Get("Pragma"), "no-cache")
+}
 
-	// Don't cache if Vary: * (impossible to match)
-	if resp.Header.Get("Vary") == "*" {
+type failedReader struct{ err error }
+
+func (r failedReader) Read([]byte) (int, error) { return 0, r.err }
+
+// IsCacheable determines if a response is safe to share without revalidation.
+func (hc *HTTPCache) IsCacheable(req *http.Request, resp *http.Response) bool {
+	if !cacheableRequest(req) || resp == nil || resp.StatusCode != http.StatusOK || strings.HasPrefix(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream") {
 		return false
 	}
-
-	return true
+	cc := parseCacheControl(strings.Join(resp.Header.Values("Cache-Control"), ","))
+	for _, d := range []string{"no-store", "no-cache", "private"} {
+		if _, ok := cc[d]; ok {
+			return false
+		}
+	}
+	if strings.EqualFold(resp.Header.Get("Pragma"), "no-cache") || resp.Header.Get("Set-Cookie") != "" {
+		return false
+	}
+	// Accept-Encoding is the only negotiated representation in our key.
+	for _, vary := range resp.Header.Values("Vary") {
+		for _, name := range strings.Split(vary, ",") {
+			name = strings.TrimSpace(name)
+			if name != "" && !strings.EqualFold(name, "Accept-Encoding") {
+				return false
+			}
+		}
+	}
+	return hc.CalculateTTL(resp) > 0
 }
 
-// CalculateTTL determines cache TTL from response headers
+// CalculateTTL caps freshness and subtracts upstream age. Explicit zero,
+// malformed, or expired freshness must never fall back to a positive default.
 func (hc *HTTPCache) CalculateTTL(resp *http.Response) time.Duration {
-	cc := parseCacheControl(resp.Header.Get("Cache-Control"))
-
-	// s-maxage (shared cache specific)
-	if sMaxAge, ok := cc["s-maxage"]; ok {
-		if age, err := strconv.Atoi(sMaxAge); err == nil && age > 0 {
-			ttl := time.Duration(age) * time.Second
-			if ttl > hc.config.MaxTTL {
+	cc := parseCacheControl(strings.Join(resp.Header.Values("Cache-Control"), ","))
+	ttl := hc.config.DefaultTTL
+	explicit := false
+	for _, name := range []string{"s-maxage", "max-age"} {
+		if value, ok := cc[name]; ok {
+			seconds, err := strconv.ParseInt(value, 10, 64)
+			if err != nil || seconds <= 0 {
+				return 0
+			}
+			// Clamp before multiplication to avoid duration overflow.
+			if seconds > int64(hc.config.MaxTTL/time.Second) {
 				ttl = hc.config.MaxTTL
+			} else {
+				ttl = time.Duration(seconds) * time.Second
 			}
-			return ttl
+			explicit = true
+			break
 		}
 	}
-
-	// max-age
-	if maxAge, ok := cc["max-age"]; ok {
-		if age, err := strconv.Atoi(maxAge); err == nil && age > 0 {
-			ttl := time.Duration(age) * time.Second
-			if ttl > hc.config.MaxTTL {
-				ttl = hc.config.MaxTTL
-			}
-			return ttl
+	date, dateErr := http.ParseTime(resp.Header.Get("Date"))
+	if !explicit && resp.Header.Get("Expires") != "" {
+		expires, err := http.ParseTime(resp.Header.Get("Expires"))
+		if err != nil {
+			return 0
+		}
+		if dateErr == nil {
+			ttl = expires.Sub(date)
+		} else {
+			ttl = time.Until(expires)
 		}
 	}
-
-	// Expires header
-	if expires := resp.Header.Get("Expires"); expires != "" {
-		if expTime, err := http.ParseTime(expires); err == nil {
-			ttl := time.Until(expTime)
-			if ttl > 0 {
-				if ttl > hc.config.MaxTTL {
-					ttl = hc.config.MaxTTL
-				}
-				return ttl
-			}
+	if ttl > hc.config.MaxTTL {
+		ttl = hc.config.MaxTTL
+	}
+	age := time.Duration(0)
+	if dateErr == nil {
+		age = time.Since(date)
+	}
+	if value := resp.Header.Get("Age"); value != "" {
+		seconds, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || seconds < 0 || seconds > int64(hc.config.MaxTTL/time.Second) {
+			return 0
+		}
+		if upstreamAge := time.Duration(seconds) * time.Second; upstreamAge > age {
+			age = upstreamAge
 		}
 	}
-
-	// Use default TTL
-	return hc.config.DefaultTTL
+	if age > 0 {
+		ttl -= age
+	}
+	return ttl
 }
 
-// GenerateKey creates a cache key for the request
+// GenerateKey preserves escaped paths and raw query ordering, both of which
+// origins may distinguish. Host separates virtual hosts on the same upstream.
 func (hc *HTTPCache) GenerateKey(req *http.Request) string {
-	// Sort query parameters for consistent keys
-	query := req.URL.Query()
-	var keys []string
-	for k := range query {
-		keys = append(keys, k)
+	scheme, host := req.URL.Scheme, req.URL.Host
+	if host == "" {
+		host = req.Host
 	}
-	sort.Strings(keys)
-
-	var sortedQuery []string
-	for _, k := range keys {
-		for _, v := range query[k] {
-			sortedQuery = append(sortedQuery, fmt.Sprintf("%s=%s", url.QueryEscape(k), url.QueryEscape(v)))
+	if scheme == "" {
+		scheme = "http"
+		if req.TLS != nil {
+			scheme = "https"
 		}
 	}
-
-	// Include Accept-Encoding in key (for Vary support)
-	encoding := req.Header.Get("Accept-Encoding")
-
-	// Build key components
-	keyStr := fmt.Sprintf("%s:%s://%s%s?%s:%s",
-		req.Method,
-		req.URL.Scheme,
-		req.URL.Host,
-		req.URL.Path,
-		strings.Join(sortedQuery, "&"),
-		encoding,
-	)
-
-	// Hash for consistent length
-	hash := sha256.Sum256([]byte(keyStr))
-	return fmt.Sprintf("cache:http:%x", hash)
+	parts := []string{req.Method, scheme, host, req.Host, req.URL.EscapedPath(), req.URL.RawQuery, strconv.FormatBool(req.URL.ForceQuery), req.Header.Get("Accept-Encoding")}
+	data, _ := json.Marshal(parts)
+	hash := sha256.Sum256(data)
+	return fmt.Sprintf("cache:http:v2:%x", hash)
 }
 
 // Purge removes a specific URL from cache
@@ -473,6 +464,7 @@ func (hc *HTTPCache) Purge(urlStr string) error {
 	req := &http.Request{
 		Method: "GET",
 		URL:    parsedURL,
+		Host:   parsedURL.Host,
 		Header: make(http.Header),
 	}
 
@@ -546,21 +538,11 @@ func parseCacheControl(header string) map[string]string {
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
 		if kv := strings.SplitN(part, "=", 2); len(kv) == 2 {
-			directives[strings.TrimSpace(kv[0])] = strings.Trim(kv[1], `"`)
+			directives[strings.ToLower(strings.TrimSpace(kv[0]))] = strings.Trim(strings.TrimSpace(kv[1]), `"`)
 		} else {
-			directives[part] = "true"
+			directives[strings.ToLower(part)] = "true"
 		}
 	}
 
 	return directives
-}
-
-func flattenHeaders(h http.Header) map[string]string {
-	flat := make(map[string]string)
-	for k, v := range h {
-		if len(v) > 0 {
-			flat[k] = v[0]
-		}
-	}
-	return flat
 }

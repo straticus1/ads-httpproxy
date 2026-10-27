@@ -352,7 +352,22 @@ func (t *Toolkit) HandleExchanges(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	switch r.Method {
 	case http.MethodGet:
-		json.NewEncoder(w).Encode(map[string]any{"exchanges": t.List()})
+		format := r.URL.Query().Get("format")
+		if format != "" && format != "json" && format != "har" {
+			http.Error(w, "format must be json or har", http.StatusBadRequest)
+			return
+		}
+		entries, err := filterExchanges(t.List(), r.URL.Query())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if format == "har" {
+			w.Header().Set("Content-Disposition", `attachment; filename="captures.har"`)
+			json.NewEncoder(w).Encode(HAR(entries))
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"exchanges": entries})
 	case http.MethodDelete:
 		t.Clear()
 		json.NewEncoder(w).Encode(map[string]string{"status": "cleared"})

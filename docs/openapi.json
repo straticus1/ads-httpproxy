@@ -309,10 +309,10 @@
     },
     "/api/devtools/exchanges": {
       "get": {
-        "summary": "List completed in-memory captures; requires devtools.enabled",
+        "summary": "List filtered captures or export HAR 1.2",
         "responses": {
           "200": {
-            "description": "Successful operation",
+            "description": "JSON exchanges object, or HAR 1.2 log object when format=har",
             "content": {
               "application/json": {
                 "schema": {
@@ -330,8 +330,71 @@
           },
           "429": {
             "description": "Rate limiter rejected request"
+          },
+          "400": {
+            "description": "Invalid format, status, timestamp, or limit"
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "format",
+            "in": "query",
+            "description": "Output format; HAR contains redacted metadata and optional body previews.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "json",
+                "har"
+              ],
+              "default": "json"
+            }
+          },
+          {
+            "name": "host",
+            "in": "query",
+            "description": "Exact authority, including port; case-insensitive.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "method",
+            "in": "query",
+            "description": "Exact HTTP method.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "HTTP status 100\u2013599; 0 matches transport failures.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 599
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "description": "Inclusive capture start timestamp.",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Return the latest matching captures in completion order.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10000
+            }
+          }
+        ]
       },
       "delete": {
         "summary": "Clear in-memory captures",

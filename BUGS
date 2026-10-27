@@ -4,15 +4,16 @@
 
 ### Critical
 
-None currently identified.
+See `docs/code-review-2026-10-27.md` for the latest scoped review and verified fixes.
 
 ### High
 
-None currently identified.
+- Route `rate_limit` is stored but not enforced; gateway handling uses the bandwidth limiter instead. Track separate per-route request limiting in TODO.
+- Shared-cache invalidation after writes and purging all negotiated variants remain incomplete. Avoid caching mutable resources until this is implemented; use origin `Cache-Control: no-store` or disable caching.
 
 ### Medium
 
-None currently identified.
+- Shutdown does not yet own every management listener/background service. See the review follow-up in TODO.
 
 ### Low
 
@@ -20,9 +21,7 @@ None currently identified.
 
 ### Documentation
 
-- **Missing examples**: Limited examples for plugin development and scripting usage
-  - Impact: Harder for developers to extend functionality
-  - Workaround: Review source code in `internal/plugin/` and `internal/scripting/`
+Plugin and scripting examples now exist in `docs/` and `examples/`.
 
 ## Feature Limitations
 
@@ -48,6 +47,16 @@ When reporting bugs, please include:
 Please open an issue on GitHub with the bug report.
 
 ## Fixed Bugs
+
+### 2026-10-27 review
+
+- Cache body races and policy bypass on hits: caching now runs at the outbound transport boundary, synchronously, inside response processing.
+- Shared-cache privacy/freshness: bypass sensitive, conditional, range, private, unsupported Vary, and streaming traffic; retain raw URL distinctions and response header multiplicity; enforce embedded TTL during tier promotion.
+- DLP body handling: nil bodies no longer panic; read errors fail explicitly; blocked/error bodies are closed.
+- Memory cache refuses entries larger than its configured budget.
+- Configuration redaction descends into nested arrays.
+- Removed a no-op cache cleanup goroutine that ran forever. Expired entries are removed on access/eviction; memory remains bounded.
+
 
 - **Mirror connection error handling**: Mirror `MirrorFactory` now retries the TCP dial up to 3 times with linear backoff before giving up, and logs a distinct error when all attempts fail instead of silently dropping.
   - Fixed in: `cmd/proxy/main.go` (`dialMirror` helper)

@@ -241,8 +241,17 @@ func redactJSONSecrets(value map[string]interface{}) {
 			}
 			continue
 		}
-		if nested, ok := item.(map[string]interface{}); ok {
-			redactJSONSecrets(nested)
+		redactJSONValue(item)
+	}
+}
+
+func redactJSONValue(value interface{}) {
+	switch value := value.(type) {
+	case map[string]interface{}:
+		redactJSONSecrets(value)
+	case []interface{}:
+		for _, item := range value {
+			redactJSONValue(item)
 		}
 	}
 }

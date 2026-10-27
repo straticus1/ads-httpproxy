@@ -20,7 +20,7 @@ func TestToolkitAndPACManagementRequireAuthentication(t *testing.T) {
 	toolkit := devtools.New(&devtools.Config{Enabled: true})
 	server.SetDevTools(toolkit)
 	handler := server.Handler()
-	for _, path := range []string{"/api/devtools/exchanges", "/api/devtools/rules", "/api/pac/policy"} {
+	for _, path := range []string{"/api/devtools/exchanges", "/api/devtools/exchanges?format=har", "/api/devtools/rules", "/api/pac/policy"} {
 		for _, key := range []string{"", "test-key"} {
 			req := httptest.NewRequest("GET", path, nil)
 			req.Header.Set("X-API-Key", key)

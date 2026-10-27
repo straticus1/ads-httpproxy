@@ -228,7 +228,7 @@ func (p *ParametricReadCloser) Close() error {
 
 // middlewareDLP checks request body for sensitive data.
 func (s *Server) middlewareDLP(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
-	if s.dlpScanner == nil {
+	if s.dlpScanner == nil || req.Body == nil {
 		return req, nil
 	}
 
@@ -242,7 +242,8 @@ func (s *Server) middlewareDLP(req *http.Request, ctx *goproxy.ProxyCtx) (*http.
 	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 		bufferPool.Put(buf)
 		logging.Logger.Error("Failed to read request body for DLP", zap.Error(err))
-		return req, nil
+		req.Body.Close()
+		return req, goproxy.NewResponse(req, goproxy.ContentTypeText, http.StatusBadRequest, "Failed to read request body")
 	}
 
 	data := scanBuf[:n]
@@ -255,6 +256,7 @@ func (s *Server) middlewareDLP(req *http.Request, ctx *goproxy.ProxyCtx) (*http.
 			zap.String("url", req.URL.String()),
 			zap.String("reason", res.Reason),
 			zap.Any("evidence", res.Evidence))
+		req.Body.Close()
 		visibility.RecordDLPViolation("request", res.Reason)
 		return req, goproxy.NewResponse(req, goproxy.ContentTypeText, http.StatusForbidden, "Access Denied: "+res.Reason)
 	}
@@ -287,7 +289,7 @@ func (s *Server) middlewareICAP(req *http.Request, ctx *goproxy.ProxyCtx) (*http
 
 // middlewareRespDLP checks response body for sensitive data.
 func (s *Server) middlewareRespDLP(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
-	if s.dlpScanner == nil {
+	if s.dlpScanner == nil || resp == nil || resp.Body == nil {
 		return resp
 	}
 
@@ -299,7 +301,8 @@ func (s *Server) middlewareRespDLP(resp *http.Response, ctx *goproxy.ProxyCtx) *
 	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 		bufferPool.Put(buf)
 		logging.Logger.Error("Failed to read response body for DLP", zap.Error(err))
-		return resp
+		resp.Body.Close()
+		return goproxy.NewResponse(ctx.Req, goproxy.ContentTypeText, http.StatusBadGateway, "Failed to read upstream body")
 	}
 	data := scanBuf[:n]
 
@@ -310,6 +313,7 @@ func (s *Server) middlewareRespDLP(resp *http.Response, ctx *goproxy.ProxyCtx) *
 		logging.Logger.Warn("DLP Blocked Response",
 			zap.String("url", ctx.Req.URL.String()),
 			zap.String("reason", res.Reason))
+		resp.Body.Close()
 		visibility.RecordDLPViolation("response", res.Reason)
 		return goproxy.NewResponse(ctx.Req, goproxy.ContentTypeText, http.StatusForbidden, "Access Denied: "+res.Reason)
 	}
@@ -377,72 +381,6 @@ func (s *Server) middlewareRespPlugins(resp *http.Response, ctx *goproxy.ProxyCt
 	modResp := s.pm.HandleResponse(resp, pluginCtx)
 	if modResp != nil {
 		return modResp
-	}
-
-	return resp
-}
-
-// middlewareCache checks cache for cached responses
-func (s *Server) middlewareCache(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
-	if s.httpCache == nil {
-		return req, nil
-	}
-
-	// Check cache
-	cached, ok := s.httpCache.Get(req)
-	if !ok {
-		// Cache MISS - continue to origin
-		return req, nil
-	}
-
-	// Check conditional requests (If-None-Match, If-Modified-Since)
-	if cached.CheckConditional(req) {
-		// Return 304 Not Modified
-		resp := &http.Response{
-			StatusCode: http.StatusNotModified,
-			Header:     make(http.Header),
-			Request:    req,
-			Proto:      "HTTP/1.1",
-			ProtoMajor: 1,
-			ProtoMinor: 1,
-		}
-
-		if cached.ETag != "" {
-			resp.Header.Set("ETag", cached.ETag)
-		}
-		if cached.LastModified != "" {
-			resp.Header.Set("Last-Modified", cached.LastModified)
-		}
-
-		resp.Header.Set("X-Cache", "HIT-CONDITIONAL")
-		logging.Logger.Debug("Cache 304 Not Modified", zap.String("url", req.URL.String()))
-		return nil, resp
-	}
-
-	// Cache HIT - return cached response
-	resp := cached.ToResponse(req)
-	logging.Logger.Debug("Cache HIT", zap.String("url", req.URL.String()))
-	return nil, resp
-}
-
-// middlewareRespCache stores responses in cache
-func (s *Server) middlewareRespCache(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
-	if s.httpCache == nil || resp == nil {
-		return resp
-	}
-
-	// Store response in cache (async)
-	go func() {
-		if err := s.httpCache.Set(ctx.Req, resp); err != nil {
-			logging.Logger.Warn("Failed to cache response",
-				zap.String("url", ctx.Req.URL.String()),
-				zap.Error(err))
-		}
-	}()
-
-	// Add cache status header
-	if resp.Header.Get("X-Cache") == "" {
-		resp.Header.Set("X-Cache", "MISS")
 	}
 
 	return resp

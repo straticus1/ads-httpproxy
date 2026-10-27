@@ -54,7 +54,12 @@ func runWithInput(args []string, input io.Reader, output io.Writer) error {
 	proxy := fs.String("proxy", "http://localhost:8080", "Forward proxy URL; empty for direct requests")
 	target := fs.String("url", "", "Request URL or replay URL override")
 	decode := fs.String("decode", "", "Decode response body: http or a comma-separated encoding chain")
-	method := fs.String("method", "GET", "Request method")
+	method := fs.String("method", "GET", "Request method; optional exact method filter for captures")
+	format := fs.String("format", "json", "Capture format: json or har")
+	host := fs.String("host", "", "Capture host filter (exact authority including port)")
+	status := fs.String("status", "", "Capture HTTP status filter; 0 for failures")
+	since := fs.String("since", "", "Capture start time lower bound (RFC3339)")
+	limit := fs.Int("limit", 0, "Maximum latest matching captures")
 	data := fs.String("data", "", "Request body")
 	file := fs.String("file", "", "Rule file: JSON object containing rules array")
 	id := fs.Uint64("id", 0, "Captured exchange ID to replay")
@@ -80,8 +85,12 @@ func runWithInput(args []string, input io.Reader, output io.Writer) error {
 		if err != nil || base.Host == "" || (base.Scheme != "http" && base.Scheme != "https") {
 			return nil, fmt.Errorf("invalid API URL")
 		}
-		base.Path = strings.TrimRight(base.Path, "/") + path
-		base.RawQuery = ""
+		endpoint, err := url.Parse(path)
+		if err != nil {
+			return nil, err
+		}
+		base.Path = strings.TrimRight(base.Path, "/") + endpoint.Path
+		base.RawQuery = endpoint.RawQuery
 		base.Fragment = ""
 		req, err := http.NewRequestWithContext(ctx, method, base.String(), body)
 		if err != nil {
@@ -112,6 +121,33 @@ func runWithInput(args []string, input io.Reader, output io.Writer) error {
 		path := "/api/devtools/exchanges"
 		verb := http.MethodGet
 		var body io.Reader
+		if command == "captures" {
+			if *format != "json" && *format != "har" {
+				return fmt.Errorf("format must be json or har")
+			}
+			if *limit < 0 || *limit > 10000 {
+				return fmt.Errorf("limit must be between 0 and 10000")
+			}
+			q := url.Values{"format": {*format}}
+			if *host != "" {
+				q.Set("host", *host)
+			}
+			if *status != "" {
+				q.Set("status", *status)
+			}
+			if *since != "" {
+				q.Set("since", *since)
+			}
+			if *limit > 0 {
+				q.Set("limit", strconv.Itoa(*limit))
+			}
+			fs.Visit(func(f *flag.Flag) {
+				if f.Name == "method" {
+					q.Set("method", *method)
+				}
+			})
+			path += "?" + q.Encode()
+		}
 		if command == "clear" {
 			verb = http.MethodDelete
 		}
@@ -134,7 +170,14 @@ func runWithInput(args []string, input io.Reader, output io.Writer) error {
 			return err
 		}
 		defer resp.Body.Close()
-		_, err = io.Copy(output, io.LimitReader(resp.Body, 32<<20))
+		content, err := io.ReadAll(io.LimitReader(resp.Body, (32<<20)+1))
+		if err != nil {
+			return err
+		}
+		if len(content) > 32<<20 {
+			return fmt.Errorf("management response exceeds 32 MiB; use captures -limit to narrow results")
+		}
+		_, err = output.Write(content)
 		return err
 	case "replay":
 		if *id == 0 {

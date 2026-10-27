@@ -8,12 +8,12 @@ import (
 
 // MemoryCache implements an in-memory LRU cache
 type MemoryCache struct {
-	maxSize  int64 // Maximum size in bytes
-	maxTTL   time.Duration
-	mu       sync.RWMutex
-	items    map[string]*cacheItem
-	lru      *list.List
-	size     int64
+	maxSize   int64 // Maximum size in bytes
+	maxTTL    time.Duration
+	mu        sync.RWMutex
+	items     map[string]*cacheItem
+	lru       *list.List
+	size      int64
 	evictions uint64
 }
 
@@ -68,6 +68,12 @@ func (mc *MemoryCache) Set(key string, value []byte, ttl time.Duration) {
 	defer mc.mu.Unlock()
 
 	size := int64(len(value))
+	if size > mc.maxSize || ttl <= 0 {
+		if existing, ok := mc.items[key]; ok {
+			mc.deleteItem(existing)
+		}
+		return
+	}
 
 	// Remove existing item if present
 	if existing, ok := mc.items[key]; ok {

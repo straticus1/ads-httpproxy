@@ -5,6 +5,16 @@ remain separate from the core implementation backlog. Guides are in `docs/`.
 
 ## High Priority
 
+### Review follow-up (2026-10-27)
+- [x] Move shared caching behind request checks and preserve response inspection on hits
+- [x] Remove concurrent reads of live response bodies during cache storage
+- [x] Add regression coverage for cache isolation/freshness, DLP errors, and nested configuration redaction
+- [x] Enforce memory-cache entry size budget
+- [ ] Implement cache variant purging and invalidation after successful unsafe methods (POST/PUT/PATCH/DELETE)
+- [ ] Enforce per-route rate_limit independently of the bandwidth limiter (route value is currently unused)
+- [ ] Complete shutdown ownership for management listeners and background services
+- [ ] Add request-path tests for ICAP, SOCKS, and direct HTTP/2 interception
+
 ### Configuration Management
 - [x] Implement JSON configuration file loading
 - [x] Implement YAML configuration file loading
@@ -106,8 +116,9 @@ remain separate from the core implementation backlog. Guides are in `docs/`.
 - [ ] Add Brotli and Zstandard body decompression
 - [x] Add fixed-target opaque QUIC/UDP relay with bounded client sessions and idle expiry
 - [x] Add end-to-end HTTP/3 gateway/upstream and opaque QUIC relay tests
-- [ ] Add HAR export and richer capture filtering
-- [ ] Add capture coverage for cache hits, pre-transport blocks, and direct HTTP/2 interception
+- [x] Add HAR export and richer capture filtering (API and ads-dev; host/method/status/since/limit)
+- [x] Add capture coverage for cache hits through wrapped transports
+- [ ] Add capture coverage for pre-transport blocks and direct HTTP/2 interception
 - [ ] Complete RFC-compliant MASQUE CONNECT-UDP and CONNECT-IP (existing handlers are experimental)
 
 ### Features

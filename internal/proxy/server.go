@@ -442,19 +442,6 @@ func NewServer(cfg *config.Config) *Server {
 
 		httpCacheMgr = cache.NewHTTPCache(cacheMgr, cacheConfig)
 
-		// Start memory cache cleanup if enabled
-		if httpCacheMgr != nil && cacheConfig.MemoryEnabled {
-			// Cleanup every 60 seconds
-			go func() {
-				ticker := time.NewTicker(60 * time.Second)
-				defer ticker.Stop()
-				for range ticker.C {
-					if httpCacheMgr != nil {
-						// Memory cleanup is handled internally
-					}
-				}
-			}()
-		}
 	}
 
 	// Configure Screenshot Service
@@ -665,11 +652,6 @@ func NewServer(cfg *config.Config) *Server {
 	// unless allow_unauthenticated is explicitly set in the config.
 	s.middleware = append(s.middleware, s.middlewareAuth)
 
-	// 4. HTTP Cache Check (After auth, before expensive operations)
-	if s.httpCache != nil {
-		s.middleware = append(s.middleware, s.middlewareCache)
-	}
-
 	// 5. Policy Engine (Needs User/Time/Geo context)
 	if s.policyEngine != nil {
 		s.middleware = append(s.middleware, s.middlewarePolicy)
@@ -729,11 +711,6 @@ func NewServer(cfg *config.Config) *Server {
 	// 2. ICAP (RespMod)
 	if s.icapClient != nil {
 		s.respMiddleware = append(s.respMiddleware, s.middlewareRespICAP)
-	}
-
-	// 3. HTTP Cache Store (Store responses in cache)
-	if s.httpCache != nil {
-		s.respMiddleware = append(s.respMiddleware, s.middlewareRespCache)
 	}
 
 	// 4. Plugin System (Response) - Last before client

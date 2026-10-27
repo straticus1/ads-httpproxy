@@ -51,6 +51,9 @@ func (s *Server) wrapTransport(next http.RoundTripper, chain bool) http.RoundTri
 	if s.h3Transport != nil && !chain {
 		next = &upstreamTransport{next: next, h3: s.h3Transport, hosts: s.cfg.QUICUpstreams}
 	}
+	if s.httpCache != nil {
+		next = &cacheTransport{next: next, cache: s.httpCache}
+	}
 	next = s.devtools.Wrap(next)
 	if s.scriptEngine != nil {
 		next = &scriptTransport{next: next, engine: s.scriptEngine}

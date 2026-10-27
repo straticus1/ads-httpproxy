@@ -26,10 +26,11 @@ devtools:
 
 The toolkit inspects outbound forward-proxy, intercepted HTTPS, and reverse
 proxy/gateway requests. Captures record upstream URL, method, response protocol,
-status, duration, selected headers, and optionally body previews. Duration ends
+status, duration, selected headers, and optionally body previews. Cache hits
+through the wrapped transport are captured too. Duration ends
 when the response body finishes or closes. WebSocket upgrades capture the
 handshake only; opaque UDP/QUIC relay datagrams are not inspected. Requests
-blocked before reaching the transport, cache hits, and HTTP/2 interception
+blocked before reaching the transport and HTTP/2 interception
 paths handled directly by goproxy are not captured by this transport wrapper.
 
 Captures remain in memory in oldest-to-newest order; capacity defaults to 500
@@ -45,6 +46,8 @@ contain application secrets; header and query redaction does not sanitize them.
 ```sh
 export ADS_API_SECRET='your-api-key'
 bin/ads-dev captures -api http://localhost:9090
+bin/ads-dev captures -host api.example.com -method GET -status 200 -limit 50
+bin/ads-dev captures -format har -limit 100 > captures.har
 bin/ads-dev replay -id 1 -proxy http://localhost:8080
 bin/ads-dev clear
 bin/ads-dev request -url http://example.com/api -header 'Accept: application/json'
@@ -61,6 +64,23 @@ body, duration, and a truncation flag (default response cap: 1 MiB).
 
 Management operations support `-secret`, `ADS_API_SECRET`, or `-user` and
 `-password`. Target/proxy TLS can trust a local PEM CA through `-ca`.
+
+## Capture filtering and HAR export
+
+`GET /api/devtools/exchanges` accepts `host` (exact authority, including port,
+case-insensitive), `method` (exact), `status` (100–599, or 0 for failures),
+`since` (inclusive RFC3339 timestamp), and `limit` (1–10,000 latest matches).
+Results keep capture completion order, oldest to newest. The CLI exposes the
+same flags; `-method` only filters captures when explicitly supplied.
+
+Use `format=har` or `ads-dev captures -format har` for a HAR 1.2 document.
+Export uses the same authenticated endpoint and already-redacted captures.
+Body previews remain opt-in and may contain secrets. `_requestTruncated` and
+`_responseTruncated` identify truncated previews. Sizes and request protocol
+are unknown; the timing comment explains that `wait` contains aggregate duration,
+not a measured time to first byte. Missing headers, cookies, and body bytes are
+not reconstructed. The CLI rejects output over 32 MiB instead of silently
+writing truncated JSON; narrow the result with filters and `-limit`.
 
 ## Mock responses and fault rules
 
