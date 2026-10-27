@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -46,10 +47,14 @@ type CacheStats struct {
 
 // HTTPCache manages HTTP response caching
 type HTTPCache struct {
-	redis  *Manager
-	memory *MemoryCache
-	config *CacheConfig
-	stats  *CacheStats
+	redis               *Manager
+	memory              *MemoryCache
+	config              *CacheConfig
+	stats               *CacheStats
+	generationMu        sync.RWMutex
+	generations         [generationPartitions]uint64
+	epoch               uint64
+	invalidationsFailed atomic.Bool
 }
 
 type prefixReadCloser struct {
@@ -123,7 +128,11 @@ func (hc *HTTPCache) Get(req *http.Request) (*CachedResponse, bool) {
 		return nil, false
 	}
 
-	key := hc.GenerateKey(req)
+	generation := hc.Begin(req)
+	if !generation.valid {
+		return nil, false
+	}
+	key := hc.generationKey(req, generation)
 
 	// L1 check (memory)
 	if hc.memory != nil {
@@ -163,16 +172,26 @@ func (hc *HTTPCache) Get(req *http.Request) (*CachedResponse, bool) {
 
 // Set stores a response in cache
 func (hc *HTTPCache) Set(req *http.Request, resp *http.Response) error {
+	return hc.SetIfCurrent(req, resp, hc.Begin(req))
+}
+
+// SetIfCurrent stores only in the namespace captured before the upstream fetch.
+// Old namespaces are unreachable after invalidation and expire normally.
+func (hc *HTTPCache) SetIfCurrent(req *http.Request, resp *http.Response, generation Generation) error {
 	if hc == nil || !hc.config.Enabled {
 		return nil
 	}
 
 	// Check if response is cacheable
-	if !hc.IsCacheable(req, resp) {
+	if !generation.valid || hc.invalidationsFailed.Load() || !hc.IsCacheable(req, resp) {
 		return nil
 	}
 
-	key := hc.GenerateKey(req)
+	resource, _ := resourceKey(req)
+	if generation.resource != resource {
+		return nil
+	}
+	key := hc.generationKey(req, generation)
 	cachedAt := time.Now()
 	ttl := hc.CalculateTTL(resp)
 	if ttl <= 0 || resp.Body == nil || resp.ContentLength < 0 || resp.ContentLength > hc.config.MaxSizeBytes {
@@ -250,7 +269,10 @@ func (hc *HTTPCache) Set(req *http.Request, resp *http.Response) error {
 
 	// Store in both tiers
 	if hc.redis != nil {
-		hc.redis.Set(key, data, ttl)
+		if err := hc.redis.SetSync(key, data, time.Until(cachedAt.Add(ttl))); err != nil {
+			atomic.AddUint64(&hc.stats.Errors, 1)
+			return err
+		}
 	}
 
 	if hc.memory != nil {
@@ -434,69 +456,46 @@ func (hc *HTTPCache) CalculateTTL(resp *http.Response) time.Duration {
 // GenerateKey preserves escaped paths and raw query ordering, both of which
 // origins may distinguish. Host separates virtual hosts on the same upstream.
 func (hc *HTTPCache) GenerateKey(req *http.Request) string {
-	scheme, host := req.URL.Scheme, req.URL.Host
-	if host == "" {
-		host = req.Host
-	}
-	if scheme == "" {
-		scheme = "http"
-		if req.TLS != nil {
-			scheme = "https"
-		}
-	}
-	parts := []string{req.Method, scheme, host, req.Host, req.URL.EscapedPath(), req.URL.RawQuery, strconv.FormatBool(req.URL.ForceQuery), req.Header.Get("Accept-Encoding")}
-	data, _ := json.Marshal(parts)
-	hash := sha256.Sum256(data)
-	return fmt.Sprintf("cache:http:v2:%x", hash)
+	resource, _ := resourceKey(req)
+	data, _ := json.Marshal([]string{req.Method, req.Host, req.Header.Get("Accept-Encoding")})
+	variant := sha256.Sum256(data)
+	return fmt.Sprintf("cache:http:v3:%s:%x", resource, variant)
 }
 
-// Purge removes a specific URL from cache
+// Purge invalidates every representation of an absolute URL. Generation
+// partitions are bounded; a hash collision safely invalidates extra resources.
 func (hc *HTTPCache) Purge(urlStr string) error {
 	if hc == nil {
 		return nil
 	}
-
-	parsedURL, err := url.Parse(urlStr)
+	target, err := url.Parse(urlStr)
 	if err != nil {
 		return err
 	}
-
-	req := &http.Request{
-		Method: "GET",
-		URL:    parsedURL,
-		Host:   parsedURL.Host,
-		Header: make(http.Header),
+	if target.Host == "" || target.User != nil || (target.Scheme != "http" && target.Scheme != "https") {
+		return fmt.Errorf("purge requires an absolute HTTP(S) URL without credentials")
 	}
-
-	key := hc.GenerateKey(req)
-
-	if hc.memory != nil {
-		hc.memory.Delete(key)
-	}
-
-	if hc.redis != nil {
-		hc.redis.Delete(key)
-	}
-
-	logging.Logger.Info("Purged cache entry", zap.String("url", urlStr), zap.String("key", key))
-	return nil
+	return hc.purgeRequest(&http.Request{URL: target, Host: target.Host})
 }
 
-// PurgeAll clears entire cache
+// PurgeAll rotates the global namespace, including for in-flight fills.
 func (hc *HTTPCache) PurgeAll() error {
 	if hc == nil {
 		return nil
 	}
-
+	if hc.redis != nil {
+		if err := hc.redis.bumpEpoch(); err != nil {
+			hc.invalidationsFailed.Store(true)
+			return err
+		}
+	}
+	hc.generationMu.Lock()
+	hc.epoch++
+	hc.generationMu.Unlock()
 	if hc.memory != nil {
 		hc.memory.Clear()
 	}
-
-	if hc.redis != nil {
-		hc.redis.PurgePattern("cache:http:*")
-	}
-
-	logging.Logger.Info("Purged all cache entries")
+	hc.invalidationsFailed.Store(false)
 	return nil
 }
 

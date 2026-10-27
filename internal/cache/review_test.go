@@ -82,7 +82,7 @@ func TestExpiredPayloadCannotOutliveItsFreshness(t *testing.T) {
 	req := httptest.NewRequest("GET", "http://example.test/", nil)
 	data, err := json.Marshal(&CachedResponse{CachedAt: time.Now().Add(-time.Hour), TTL: time.Second})
 	require.NoError(t, err)
-	hc.memory.Set(hc.GenerateKey(req), data, time.Hour)
+	hc.memory.Set(hc.generationKey(req, hc.Begin(req)), data, time.Hour)
 	_, ok := hc.Get(req)
 	require.False(t, ok)
 	resp := cacheResponse()

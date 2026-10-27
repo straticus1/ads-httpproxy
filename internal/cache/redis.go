@@ -2,6 +2,10 @@ package cache
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -32,6 +36,7 @@ func NewManager(cfg *config.RedisConfig) *Manager {
 	defer cancel()
 	if err := rdb.Ping(ctx).Err(); err != nil {
 		logging.Logger.Error("Failed to connect to Redis cache", zap.Error(err))
+		rdb.Close()
 		return nil
 	}
 
@@ -56,18 +61,77 @@ func (m *Manager) Get(key string) ([]byte, bool) {
 	return []byte(val), true
 }
 
+// Set is retained for non-HTTP callers. Writes are bounded and synchronous;
+// per-response goroutines would permit stale writes after invalidation.
 func (m *Manager) Set(key string, value []byte, ttl time.Duration) {
-	if m == nil {
-		return
+	if err := m.SetSync(key, value, ttl); err != nil {
+		logging.Logger.Warn("Redis Set error", zap.Error(err))
 	}
-	// Don't block heavily on cache sets
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-		defer cancel()
-		if err := m.client.Set(ctx, key, value, ttl).Err(); err != nil {
-			logging.Logger.Warn("Redis Set error", zap.Error(err))
+}
+
+func (m *Manager) SetSync(key string, value []byte, ttl time.Duration) error {
+	if m == nil || ttl <= 0 {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	return m.client.Set(ctx, key, value, ttl).Err()
+}
+
+// Epoch and partition tokens have bounded cardinality (257). Missing or evicted
+// tokens are recreated randomly: a Redis restart/eviction cannot expose a stale
+// L1 namespace by resetting a generation counter to zero.
+func (m *Manager) generations(partition byte) (string, string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	keys := []string{"cache:generation:v3:epoch", fmt.Sprintf("cache:generation:v3:%d", partition)}
+	values, err := m.client.MGet(ctx, keys...).Result()
+	if err != nil {
+		return "", "", err
+	}
+	missing := false
+	for i, value := range values {
+		if value == nil {
+			token, err := generationToken()
+			if err != nil {
+				return "", "", err
+			}
+			if err := m.client.SetNX(ctx, keys[i], token, 0).Err(); err != nil {
+				return "", "", err
+			}
+			missing = true
 		}
-	}()
+	}
+	if missing {
+		values, err = m.client.MGet(ctx, keys...).Result()
+		if err != nil {
+			return "", "", err
+		}
+	}
+	if len(values) != 2 || values[0] == nil || values[1] == nil {
+		return "", "", errors.New("cache generations unavailable")
+	}
+	return fmt.Sprint(values[0]), fmt.Sprint(values[1]), nil
+}
+func generationToken() (string, error) {
+	var token [16]byte
+	if _, err := rand.Read(token[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(token[:]), nil
+}
+func (m *Manager) bumpGeneration(partition byte) error {
+	return m.bump(fmt.Sprintf("cache:generation:v3:%d", partition))
+}
+func (m *Manager) bumpEpoch() error { return m.bump("cache:generation:v3:epoch") }
+func (m *Manager) bump(key string) error {
+	token, err := generationToken()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	return m.client.Set(ctx, key, token, 0).Err()
 }
 
 // Delete removes a key from cache
