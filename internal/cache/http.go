@@ -22,6 +22,9 @@ import (
 
 // CachedResponse represents a cached HTTP response
 type CachedResponse struct {
+	Proto          string        `json:"proto,omitempty"`
+	ProtoMajor     int           `json:"proto_major,omitempty"`
+	ProtoMinor     int           `json:"proto_minor,omitempty"`
 	StatusCode     int           `json:"status_code"`
 	Headers        http.Header   `json:"headers"`
 	Body           []byte        `json:"body"`
@@ -248,6 +251,7 @@ func (hc *HTTPCache) SetIfCurrent(req *http.Request, resp *http.Response, genera
 
 	// Create cached response
 	cached := &CachedResponse{
+		Proto: resp.Proto, ProtoMajor: resp.ProtoMajor, ProtoMinor: resp.ProtoMinor,
 		StatusCode:     resp.StatusCode,
 		Headers:        resp.Header.Clone(),
 		Body:           bodyToStore,
@@ -329,15 +333,19 @@ func (cr *CachedResponse) ToResponse(req *http.Request) *http.Response {
 	headers.Set("Age", strconv.FormatInt(int64(age/time.Second), 10))
 	headers.Set("X-Cache-Lookup", "HIT")
 
+	proto, major, minor := cr.Proto, cr.ProtoMajor, cr.ProtoMinor
+	if major == 0 {
+		proto, major, minor = "HTTP/1.1", 1, 1
+	}
 	return &http.Response{
 		StatusCode:    cr.StatusCode,
 		Header:        headers,
 		Body:          io.NopCloser(bytes.NewReader(body)),
 		ContentLength: int64(len(body)),
 		Request:       req,
-		Proto:         "HTTP/1.1",
-		ProtoMajor:    1,
-		ProtoMinor:    1,
+		Proto:         proto,
+		ProtoMajor:    major,
+		ProtoMinor:    minor,
 	}
 }
 
