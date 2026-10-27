@@ -11,11 +11,13 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
 	"ads-httpproxy/internal/auth"
 	"ads-httpproxy/internal/cache"
+	"ads-httpproxy/internal/headerpolicy"
 	"github.com/elazarl/goproxy"
 )
 
@@ -247,7 +249,21 @@ func (s *Server) trackConnectDialer() {
 		var err error
 		switch {
 		case parent != nil:
-			conn, err = dialParentCONNECT(req.Context(), parent, network, addr)
+			s.prepareHeaders(req, false)
+			handshake := req.Clone(req.Context())
+			handshake.Header = make(http.Header)
+			if s.headerPolicy != nil {
+				if err = s.applyRequestHeaders(handshake); err != nil {
+					return nil, err
+				}
+			} else {
+				policy, _ := headerpolicy.New(nil)
+				snapshot := policy.Capture(req, false)
+				if err = policy.ApplyRequest(handshake, &snapshot, "", nil); err != nil {
+					return nil, err
+				}
+			}
+			conn, err = dialParentCONNECT(req.Context(), parent, network, addr, handshake.Header)
 		case withReq != nil:
 			conn, err = withReq(req, network, addr)
 		case legacy != nil:
@@ -267,7 +283,7 @@ func (s *Server) trackConnectDialer() {
 
 // dialParentCONNECT performs a bounded handshake and never copies caller
 // credentials. HTTPS parents use normal hostname and certificate verification.
-func dialParentCONNECT(ctx context.Context, parent *url.URL, network, addr string) (net.Conn, error) {
+func dialParentCONNECT(ctx context.Context, parent *url.URL, network, addr string, headers ...http.Header) (net.Conn, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	port := parent.Port()
@@ -303,6 +319,30 @@ func dialParentCONNECT(ctx context.Context, parent *url.URL, network, addr strin
 		conn = tlsConn
 	}
 	r := &http.Request{Method: http.MethodConnect, URL: &url.URL{Opaque: addr}, Host: addr, Header: make(http.Header)}
+	if len(headers) > 0 {
+		r.Header = headers[0].Clone()
+	}
+	if r.Header == nil {
+		r.Header = make(http.Header)
+	}
+	if len(headers) == 0 {
+		policy, _ := headerpolicy.New(nil)
+		snapshot := policy.Capture(r, false)
+		if err = policy.ApplyRequest(r, &snapshot, "", nil); err != nil {
+			return nil, err
+		}
+	}
+	// Parent authentication belongs to the configured parent URL. Never send
+	// origin credentials or an origin-allowlisted identity to this proxy.
+	for name := range r.Header {
+		lower := strings.ToLower(name)
+		if lower == "authorization" || lower == "cookie" || lower == "proxy-authorization" || strings.HasPrefix(lower, "x-authenticated-") {
+			delete(r.Header, name)
+		}
+	}
+	if _, present := r.Header["User-Agent"]; !present {
+		r.Header["User-Agent"] = []string{""}
+	}
 	if parent.User != nil {
 		password, _ := parent.User.Password()
 		r.Header.Set("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(parent.User.Username()+":"+password)))
