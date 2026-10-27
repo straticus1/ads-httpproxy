@@ -15,6 +15,17 @@ remain separate from the core implementation backlog. Guides are in `docs/`.
 - [x] Close management listeners and owned background services; drain analysis workers within the shutdown deadline
 - [ ] Add request-path tests for ICAP, SOCKS, and direct HTTP/2 interception
 
+### HTTP header policy
+- [x] Separate forward-proxy privacy defaults and reverse-gateway forwarding defaults
+- [x] Add configurable request/response set, append, and remove operations
+- [x] Validate trusted proxy CIDRs and reconstruct forwarding metadata from ingress
+- [x] Protect identity, credentials, framing, and hop-by-hop fields; opt in gateway identity by upstream authority
+- [x] Preserve multi-value headers through Starlark, including independent Set-Cookie lines
+- [x] Generate Via using a configurable pseudonym, including parent CONNECT handshakes
+- [x] Enforce CEL header obligations after programmable hooks and preserve trust context through request replacement
+
+See `docs/header-policy.md` for configuration, execution order, and migration.
+
 ### Configuration Management
 - [x] Implement JSON configuration file loading
 - [x] Implement YAML configuration file loading

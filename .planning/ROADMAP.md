@@ -63,3 +63,10 @@ This is a parallel product expansion; existing engine/cloud backlog remains open
 
 Plan index: [02-INDEX.md](phases/02-media-gateway/02-INDEX.md).
 Independent review: [02-REVIEW.md](phases/02-media-gateway/02-REVIEW.md).
+
+## Phase 03: HTTP header policy
+
+Six requested capabilities implemented: mode-specific defaults, request/response
+operations, trusted forwarding, protected headers, multi-value Starlark headers,
+and pseudonymous Via. CEL obligations share the same validated mutation contract.
+Phase 02 media remains planned only. See `docs/header-policy.md` for migration.
