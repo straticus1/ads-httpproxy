@@ -15,6 +15,9 @@ type GatewayTLSConfig struct {
 }
 
 func (c *Config) validatePlatform() error {
+	if len(c.APIKeys) > 0 && c.ApiSecret == "changeme" {
+		return fmt.Errorf("replace or clear default api_secret before enabling scoped keys")
+	}
 	if c.ConnectMode != "" && c.ConnectMode != "mitm" && c.ConnectMode != "tunnel" {
 		return fmt.Errorf("connect_mode must be mitm or tunnel")
 	}

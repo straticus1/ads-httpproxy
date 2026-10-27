@@ -24,6 +24,7 @@ import (
 	"ads-httpproxy/internal/browserid"
 	"ads-httpproxy/internal/cache"
 	"ads-httpproxy/internal/config"
+	"ads-httpproxy/internal/controlplane"
 	"ads-httpproxy/internal/devtools"
 	"ads-httpproxy/internal/dlp"
 	"ads-httpproxy/internal/geoip"
@@ -77,6 +78,7 @@ func (b bufferPoolAdapter) Put(bytes []byte) {
 }
 
 type Server struct {
+	connectSockets    connectRegistry
 	telemetryShutdown func(context.Context) error
 	analysis          *analysis.Manager
 	adaptive          *adaptive.Engine
@@ -161,15 +163,33 @@ func NewServer(cfg *config.Config) *Server {
 	// By default, Go's http.Transport enables http2.
 
 	// Configure MITM
-	ca, err := mitm.LoadCA(cfg.CaCert, cfg.CaKey)
-	if err != nil {
-		logging.Logger.Error("Failed to load CA; generating an isolated fallback CA", zap.Error(err))
-		ca, err = mitm.GenerateCA()
+	var ca *tls.Certificate
+	var err error
+	if cfg.ConnectMode != "tunnel" {
+		ca, err = mitm.LoadCA(cfg.CaCert, cfg.CaKey)
 		if err != nil {
-			panic(fmt.Errorf("initialize MITM CA: %w", err))
+			logging.Logger.Error("Failed to load CA; generating an isolated fallback CA", zap.Error(err))
+			ca, err = mitm.GenerateCA()
+			if err != nil {
+				panic(fmt.Errorf("initialize MITM CA: %w", err))
+			}
 		}
 	}
-	mitm.Configure(p, ca)
+	// goproxy preserves UserData, but not the CONNECT request context, while
+	// parsing decrypted requests. Carry only server-verified tunnel identity.
+	p.OnRequest().HandleConnectFunc(func(host string, ctx *goproxy.ProxyCtx) (*goproxy.ConnectAction, string) {
+		if identity, ok := ctx.Req.Context().Value(tunnelIdentityKey{}).(tunnelIdentity); ok {
+			ctx.UserData = identity
+		}
+		return nil, host
+	})
+	if cfg.ConnectMode == "tunnel" {
+		p.OnRequest().HandleConnectFunc(func(host string, ctx *goproxy.ProxyCtx) (*goproxy.ConnectAction, string) {
+			return goproxy.OkConnect, host
+		})
+	} else {
+		mitm.Configure(p, ca)
+	}
 
 	pm := plugin.NewManager()
 
@@ -562,6 +582,13 @@ func NewServer(cfg *config.Config) *Server {
 		s.aiGate = g
 		s.initErr = errors.Join(s.initErr, err)
 	}
+	if cfg.ControlPlane != nil {
+		manager, err := controlplane.New(*cfg.ControlPlane, s.policyEngine)
+		s.initErr = errors.Join(s.initErr, err)
+		if err == nil {
+			s.apiServer.SetControlPlane(manager)
+		}
+	}
 	s.apiServer.SetPlatform(s.analysis, s.adaptive)
 	if revoker, ok := s.authenticator.(interface{ RevokeSubject(string) int }); ok {
 		s.apiServer.SetIdentityRevoker(revoker.RevokeSubject)
@@ -700,7 +727,7 @@ func NewServer(cfg *config.Config) *Server {
 	// 3. Auth — always enforced. The authenticator is never nil: when no
 	// mechanism is configured, a DenyAllAuthenticator blocks all traffic
 	// unless allow_unauthenticated is explicitly set in the config.
-	s.middleware = append(s.middleware, s.middlewareAuth, s.middlewareAccess)
+	s.middleware = append(s.middleware, s.middlewareTunnelAuth, s.middlewareAccess)
 
 	// 5. Policy Engine (Needs User/Time/Geo context)
 	if s.policyEngine != nil {
@@ -768,6 +795,10 @@ func NewServer(cfg *config.Config) *Server {
 
 	// Hook Processor
 	p.OnRequest().DoFunc(func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
+		if identity, ok := ctx.UserData.(tunnelIdentity); ok {
+			*req = *req.WithContext(context.WithValue(req.Context(), tunnelIdentityKey{}, identity))
+			req.TLS = identity.TLS
+		}
 		ctx.RoundTripper = goproxy.RoundTripperFunc(func(outgoing *http.Request, _ *goproxy.ProxyCtx) (*http.Response, error) {
 			return s.wrapTransport(p.Tr, false).RoundTrip(outgoing)
 		})
@@ -800,6 +831,7 @@ func NewServer(cfg *config.Config) *Server {
 		return resp
 	})
 
+	s.trackConnectDialer()
 	return s
 }
 
@@ -817,6 +849,10 @@ func (s *Server) GatewayHandler(w http.ResponseWriter, r *http.Request) {
 	ctx, span := tracer.Start(r.Context(), r.URL.Path)
 	defer span.End()
 	r = r.WithContext(ctx)
+	if r.Method == http.MethodConnect {
+		s.handleConnectRequest(w, r)
+		return
+	}
 
 	if s.cfg.Features != nil && s.cfg.Features.MASQUE {
 		if r.Method == "CONNECT-UDP" {
@@ -1098,6 +1134,7 @@ func (s *Server) Serve(l net.Listener) error {
 
 func (s *Server) Shutdown(ctx context.Context) error {
 	var errs []error
+	s.connectSockets.closeAll()
 	if s.apiServer != nil {
 		errs = append(errs, s.apiServer.Shutdown(ctx))
 	}

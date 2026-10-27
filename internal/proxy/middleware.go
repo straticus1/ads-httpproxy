@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"sync" // Added sync for Pool
+	"time"
 
 	"ads-httpproxy/internal/auth"
 	"ads-httpproxy/internal/cache"
@@ -125,35 +126,25 @@ func (s *Server) middlewareWAF(req *http.Request, ctx *goproxy.ProxyCtx) (*http.
 
 // middlewarePolicy evaluates CEL policies.
 func (s *Server) middlewarePolicy(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
-	// Extract Context
-	principal, _ := auth.PrincipalFromContext(req.Context())
-	user := principal.Username
-	evalCtx := policy.NewEvalContext(req, user, "")
-	evalCtx.User.Groups = principal.Groups
-	evalCtx.User.Subject = principal.Subject
-	evalCtx.User.Issuer = principal.Issuer
-	evalCtx.User.Tenant = principal.Tenant
-	evalCtx.User.Scopes = principal.Scopes
-	evalCtx.User.AMR = principal.AMR
-	evalCtx.User.ACR = principal.ACR
-	evalCtx.Client.VerifiedMTLS = clientIdentity(req).VerifiedMTLS
+	evalCtx := policy.NewVerifiedInput(req, time.Now())
 
 	// Check Policies
 	if s.policyEngine == nil {
 		return req, nil
 	}
-	allowed, matched, actions, reason := s.policyEngine.Evaluate(req.Context(), evalCtx)
-	if !allowed {
+	decision := s.policyEngine.Decide(req.Context(), evalCtx)
+	actions, reason := decision.Actions(), decision.Reason
+	if decision.Effect != "allow" {
 		logging.Logger.Warn("Blocked by Policy",
 			zap.String("reason", reason),
 			zap.Strings("actions", actions))
 		return req, goproxy.NewResponse(req, goproxy.ContentTypeText, http.StatusForbidden, "Access Denied: "+reason)
 	}
 
-	if code, err := s.applyPolicyActions(req, actions, reason); err != nil {
+	if code, err := s.applyPolicyActions(req, actions, fmt.Sprintf("%d:%s", decision.PolicyVersion, decision.PolicyID)); err != nil {
 		return req, goproxy.NewResponse(req, "text/plain", code, err.Error())
 	}
-	if matched {
+	if decision.Matched {
 		logging.Logger.Debug("Policy Matched", zap.String("reason", reason))
 	}
 
