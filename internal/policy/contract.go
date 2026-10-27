@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"ads-httpproxy/internal/auth"
-	"golang.org/x/net/http/httpguts"
+	"ads-httpproxy/internal/headerpolicy"
 )
 
 var ErrVersionConflict = errors.New("policy version conflict")
@@ -29,6 +29,8 @@ type Decision struct {
 type Obligation struct {
 	Kind              string   `json:"kind"`
 	Headers           []string `json:"headers,omitempty"`
+	Name              string   `json:"name,omitempty"`
+	Values            []string `json:"values,omitempty"`
 	RequestsPerSecond int      `json:"requests_per_second,omitempty"`
 }
 
@@ -102,15 +104,40 @@ func parseObligations(actions []string) ([]Obligation, error) {
 		case "redact_headers":
 			for _, h := range strings.Split(arg, ",") {
 				h = strings.TrimSpace(h)
-				if !httpguts.ValidHeaderFieldName(h) {
-					return nil, fmt.Errorf("invalid header action")
+				if err := headerpolicy.ValidateOperation(h, nil, true); err != nil {
+					return nil, fmt.Errorf("invalid header action: %w", err)
 				}
 				o.Headers = append(o.Headers, http.CanonicalHeaderKey(h))
+			}
+		case "set_header", "append_header", "remove_header", "response_set_header", "response_append_header", "response_remove_header":
+			remove := strings.HasSuffix(name, "remove_header")
+			h := arg
+			if !remove {
+				var value string
+				var found bool
+				h, value, found = strings.Cut(arg, ":")
+				if !found {
+					return nil, fmt.Errorf("header action %q requires a value", name)
+				}
+				o.Values = []string{value}
+			}
+			if err := headerpolicy.ValidateOperation(h, o.Values, remove); err != nil {
+				return nil, fmt.Errorf("invalid %s action: %w", name, err)
+			}
+			o.Name = http.CanonicalHeaderKey(h)
+			if !remove && !strings.HasPrefix(name, "response_") && o.Name == "Set-Cookie" {
+				return nil, fmt.Errorf("Set-Cookie is only supported in response header actions")
 			}
 		default:
 			return nil, fmt.Errorf("unsupported policy action %q", action)
 		}
 		obligations = append(obligations, o)
+	}
+	request, response := operationsFromObligations(obligations)
+	for _, ops := range []headerpolicy.Operations{request, response} {
+		if err := headerpolicy.ApplyOperations(make(http.Header), ops); err != nil {
+			return nil, fmt.Errorf("invalid header action collection: %w", err)
+		}
 	}
 	return obligations, nil
 }
@@ -129,6 +156,12 @@ func (d Decision) Actions() []string {
 			actions = append(actions, "rate_limit:"+strconv.Itoa(o.RequestsPerSecond))
 		case "redact_headers":
 			actions = append(actions, "redact_headers:"+strings.Join(o.Headers, ","))
+		case "remove_header", "response_remove_header":
+			actions = append(actions, o.Kind+":"+o.Name)
+		case "set_header", "append_header", "response_set_header", "response_append_header":
+			for _, value := range o.Values {
+				actions = append(actions, o.Kind+":"+o.Name+":"+value)
+			}
 		}
 	}
 	return actions
