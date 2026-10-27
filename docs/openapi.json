@@ -3,7 +3,7 @@
   "info": {
     "title": "ADS HTTP Proxy Management API",
     "version": "1.0.0",
-    "description": "API keys and configured Basic users are alternatives. Public health/metrics/PAC/dashboard routes are unauthenticated. Optional cache and developer routes return 404 when not mounted. Error bodies are plain text. Configuration mutation is disabled."
+    "description": "API keys and configured Basic users are alternatives. Public health/metrics/PAC/dashboard routes are unauthenticated. Optional cache and developer routes return 404 when not mounted. Error bodies are plain text. Configuration mutation is disabled. Platform endpoints require configured administrator authentication and are mounted only when their feature is enabled. See enterprise-platform.md for operational limits."
   },
   "servers": [
     {
@@ -829,6 +829,481 @@
           }
         },
         "security": []
+      }
+    },
+    "/api/analysis/findings": {
+      "get": {
+        "summary": "List fresh sampled findings (global administrator access)",
+        "tags": [
+          "Platform"
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Feature not enabled"
+          },
+          "503": {
+            "description": "API authentication not configured"
+          }
+        },
+        "parameters": [
+          {
+            "in": "query",
+            "name": "tenant",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "category",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000,
+              "default": 100
+            }
+          }
+        ]
+      }
+    },
+    "/api/analysis/stats": {
+      "get": {
+        "summary": "Worker queue, sampling and journal counters",
+        "tags": [
+          "Platform"
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Feature not enabled"
+          },
+          "503": {
+            "description": "API authentication not configured"
+          }
+        }
+      }
+    },
+    "/api/adaptive/policy": {
+      "get": {
+        "summary": "Read current adaptive policy and retained history",
+        "tags": [
+          "Platform"
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Feature not enabled"
+          },
+          "503": {
+            "description": "API authentication not configured"
+          }
+        }
+      },
+      "put": {
+        "summary": "Atomically replace adaptive policy",
+        "tags": [
+          "Platform"
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Feature not enabled"
+          },
+          "503": {
+            "description": "API authentication not configured"
+          },
+          "409": {
+            "description": "Version conflict or persistence failure; policy unchanged"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "expected_version": {
+                    "type": "integer"
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "observe",
+                      "shadow",
+                      "enforce"
+                    ]
+                  },
+                  "rules": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "id",
+                        "action"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "tenant": {
+                          "type": "string"
+                        },
+                        "host": {
+                          "type": "string"
+                        },
+                        "path_prefix": {
+                          "type": "string"
+                        },
+                        "category": {
+                          "type": "string"
+                        },
+                        "action": {
+                          "type": "string",
+                          "enum": [
+                            "allow",
+                            "block"
+                          ]
+                        },
+                        "min_confidence": {
+                          "type": "number",
+                          "minimum": 0,
+                          "maximum": 1
+                        },
+                        "expires_at": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "expected_version",
+                  "mode",
+                  "rules"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/adaptive/preview": {
+      "post": {
+        "summary": "Evaluate hypothetical content input without changing policy",
+        "tags": [
+          "Platform"
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Feature not enabled"
+          },
+          "503": {
+            "description": "API authentication not configured"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "tenant": {
+                    "type": "string"
+                  },
+                  "host": {
+                    "type": "string"
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "category": {
+                    "type": "string"
+                  },
+                  "confidence": {
+                    "type": "number"
+                  },
+                  "finding_expires_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/adaptive/rollback": {
+      "post": {
+        "summary": "Restore retained version as a new version",
+        "tags": [
+          "Platform"
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Feature not enabled"
+          },
+          "503": {
+            "description": "API authentication not configured"
+          },
+          "409": {
+            "description": "Version conflict, unknown target, or persistence failure"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "expected_version": {
+                    "type": "integer"
+                  },
+                  "target_version": {
+                    "type": "integer"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "expected_version",
+                  "target_version"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ai/explain": {
+      "post": {
+        "summary": "Read-only explanation of selected findings",
+        "tags": [
+          "Platform"
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Feature not enabled"
+          },
+          "503": {
+            "description": "API authentication not configured"
+          },
+          "502": {
+            "description": "Configured explanation provider failed"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "question": {
+                    "type": "string",
+                    "maxLength": 4096
+                  },
+                  "tenant": {
+                    "type": "string"
+                  },
+                  "category": {
+                    "type": "string"
+                  },
+                  "limit": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100,
+                    "default": 50
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/identity/revoke": {
+      "post": {
+        "summary": "Revoke local browser sessions for a subject",
+        "tags": [
+          "Platform"
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Feature not enabled"
+          },
+          "503": {
+            "description": "API authentication not configured"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "subject": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "subject"
+                ]
+              }
+            }
+          }
+        }
       }
     }
   },

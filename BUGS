@@ -8,12 +8,11 @@ See `docs/code-review-2026-10-27.md` for the latest scoped review and verified f
 
 ### High
 
-- Route `rate_limit` is stored but not enforced; gateway handling uses the bandwidth limiter instead. Track separate per-route request limiting in TODO.
-- Shared-cache invalidation after writes and purging all negotiated variants remain incomplete. Avoid caching mutable resources until this is implemented; use origin `Cache-Control: no-store` or disable caching.
+No remaining high-severity issues identified in the scoped review. This is not a whole-platform security certification.
 
 ### Medium
 
-- Shutdown does not yet own every management listener/background service. See the review follow-up in TODO.
+Active SOCKS connections cannot be drained by the current library; see the limitation below.
 
 ### Low
 
@@ -30,6 +29,12 @@ Plugin and scripting examples now exist in `docs/` and `examples/`.
 1. **Error Recovery**: Limited error recovery mechanisms for transient failures (network issues, temporary service unavailability).
 
 2. **SOCKS Connection Draining**: Graceful shutdown closes the SOCKS5 listener (stopping new connections) but does not drain active connections. The `go-socks5` library does not expose a drain mechanism.
+
+3. **Process-local state**: Browser sessions/revocation, posture caches, and request budgets are local to one process. Management authentication provides cross-tenant administrative access, not tenant-scoped RBAC.
+
+4. **Analysis durability and privacy**: Completed findings have an optional durable journal, but queued work does not survive a crash. Body previews are opt-in; credential-pattern redaction is not general PII anonymization.
+
+5. **Protocol visibility**: Content analysis and AI model controls require visible HTTP. Opaque tunnels and UDP/QUIC relays do not provide application-content inspection. Live IdP certification and vendor-native AI adapters remain future work.
 
 ## Reporting Bugs
 
@@ -50,6 +55,12 @@ Please open an issue on GitHub with the bug report.
 
 ### 2026-10-27 review
 
+- Cache invalidation now removes affected variants after successful unsafe requests and explicit purges.
+- Gateway route request limits are enforced separately from byte-rate limits.
+- Shutdown closes management listeners and owned background services and drains sampling workers within the deadline.
+- Verified identity reaches access policies; unsupported policy actions fail validation instead of silently succeeding.
+- Adaptive policy validation rejects non-finite confidence values and checks persistence encoding/size before publication.
+- AI egress authority checks handle default HTTPS ports and trailing-dot aliases and reject URL userinfo on controlled destinations.
 - Cache body races and policy bypass on hits: caching now runs at the outbound transport boundary, synchronously, inside response processing.
 - Shared-cache privacy/freshness: bypass sensitive, conditional, range, private, unsupported Vary, and streaming traffic; retain raw URL distinctions and response header multiplicity; enforce embedded TTL during tier promotion.
 - DLP body handling: nil bodies no longer panic; read errors fail explicitly; blocked/error bodies are closed.
@@ -64,7 +75,7 @@ Please open an issue on GitHub with the bug report.
 - **Configuration defaults**: JSON/YAML configuration file loading is now fully implemented. Pass `-config <path>` to load from a file; env vars override file values.
   - Fixed in: `internal/config/config.go` (`Load`, `LoadEnv`), `cmd/proxy/main.go`
 
-- **API secret default**: `Validate()` now prints a prominent stderr warning when the API secret is still set to the default `"changeme"`.
+- **API secret default**: `Validate()` rejects empty/default administrative secrets on non-loopback binds. New platform endpoints also reject operation without configured administrative credentials. Provision a unique secret with `ADS_API_SECRET`.
   - Fixed in: `internal/config/config.go` (`Validate`)
 
 - **API Server Not Started**: `proxy.Server.Serve()` now calls `s.apiServer.Start()` before accepting connections.

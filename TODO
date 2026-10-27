@@ -10,9 +10,9 @@ remain separate from the core implementation backlog. Guides are in `docs/`.
 - [x] Remove concurrent reads of live response bodies during cache storage
 - [x] Add regression coverage for cache isolation/freshness, DLP errors, and nested configuration redaction
 - [x] Enforce memory-cache entry size budget
-- [ ] Implement cache variant purging and invalidation after successful unsafe methods (POST/PUT/PATCH/DELETE)
-- [ ] Enforce per-route rate_limit independently of the bandwidth limiter (route value is currently unused)
-- [ ] Complete shutdown ownership for management listeners and background services
+- [x] Implement cache variant purging and invalidation after successful unsafe methods (POST/PUT/PATCH/DELETE)
+- [x] Enforce per-route rate_limit independently of the bandwidth limiter
+- [x] Close management listeners and owned background services; drain analysis workers within the shutdown deadline
 - [ ] Add request-path tests for ICAP, SOCKS, and direct HTTP/2 interception
 
 ### Configuration Management
@@ -21,6 +21,23 @@ remain separate from the core implementation backlog. Guides are in `docs/`.
 - [x] Add configuration file path flag to proxy server
 - [x] Add configuration validation on startup
 - [x] Support environment variable overrides
+
+### Enterprise platform
+
+See `docs/enterprise-platform.md` and `examples/platform.yaml` for configuration and limits.
+
+- [x] Add OIDC authorization-code/PKCE browser login, SAML SP login, OAuth2 introspection claim checks, and local session revocation
+- [x] Add verified identity context, mTLS gateway checks, group/scope/MFA/auth-age checks, and fail-closed posture integration
+- [x] Add bounded asynchronous traffic sampling, tenant admission budgets, sanitized findings, and restartable bounded findings journals
+- [x] Add adaptive observe/shadow/enforce modes, fresh category evidence, optimistic updates, preview, expiry, persistence, and rollback
+- [x] Add read-only local/custom-adapter AI explanations and AI egress host/model/request-budget/credential controls
+- [ ] Define one decision schema and explicit precedence across CEL, scripts, adaptive filtering, and other controls; add replay tests
+- [ ] Validate OIDC and SAML against live enterprise IdPs and document provider-specific setup
+- [ ] Add distributed session/revocation stores and request budgets for multi-instance deployments
+- [ ] Add tenant-scoped management authorization (current management credentials are cross-tenant administrators)
+- [ ] Add durable sampling work queues if crash-surviving pending work is required
+- [ ] Add richer evaluated classifiers, vendor-native AI adapters, and token/cost accounting
+- [ ] Evaluate an optional OPA/Rego adapter after policy consolidation; defer Cedar until application authorization requires it
 
 ### CRITICAL FIXES NEEDED
 - [x] Sign MITM per-host certificates using the configured CA instead of the built-in/default handler

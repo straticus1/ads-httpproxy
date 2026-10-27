@@ -79,3 +79,9 @@ ran successfully with no reported data races. Local TCP/UDP listener tests ran
 outside the sandbox after permission was granted. Redis-backed integration,
 external authentication/ICAP services, deployment, and browser HAR imports were
 not exercised. Changes remain uncommitted in the working tree.
+
+## Platform follow-up
+
+Cache invalidation, route request limits, identity, management listener ownership
+and bounded analysis services were subsequently implemented. See
+[enterprise platform](enterprise-platform.md) for scope and remaining limits.

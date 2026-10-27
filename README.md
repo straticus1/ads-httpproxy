@@ -529,6 +529,7 @@ For issues, questions, or contributions, please open an issue on GitHub.
 
 ## Developer and operations guides
 
+- [Enterprise identity, traffic analysis, adaptive filtering, and AI](docs/enterprise-platform.md) — [local configuration](examples/platform.yaml)
 - [Developer toolkit and QUIC](docs/developer-toolkit.md)
 - [Management API OpenAPI reference](docs/openapi.json)
 - [Admin CLI](docs/admin-cli.md)
