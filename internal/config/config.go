@@ -15,6 +15,7 @@ import (
 	"ads-httpproxy/internal/ai"
 	"ads-httpproxy/internal/analysis"
 	"ads-httpproxy/internal/devtools"
+	"ads-httpproxy/internal/headerpolicy"
 	"ads-httpproxy/internal/mitm"
 
 	"gopkg.in/yaml.v3"
@@ -36,6 +37,7 @@ type QUICRelayConfig struct {
 }
 
 type Config struct {
+	Headers              *headerpolicy.Config      `json:"headers" yaml:"headers"`
 	Analysis             *analysis.Config          `json:"analysis" yaml:"analysis"`
 	Adaptive             *adaptive.Config          `json:"adaptive" yaml:"adaptive"`
 	AI                   *ai.Config                `json:"ai" yaml:"ai"`

@@ -28,6 +28,7 @@ import (
 	"ads-httpproxy/internal/devtools"
 	"ads-httpproxy/internal/dlp"
 	"ads-httpproxy/internal/geoip"
+	"ads-httpproxy/internal/headerpolicy"
 	"ads-httpproxy/internal/icap"
 	"ads-httpproxy/internal/ja3"
 	"ads-httpproxy/internal/masque"
@@ -78,6 +79,7 @@ func (b bufferPoolAdapter) Put(bytes []byte) {
 }
 
 type Server struct {
+	headerPolicy      *headerpolicy.Policy
 	connectSockets    connectRegistry
 	telemetryShutdown func(context.Context) error
 	analysis          *analysis.Manager
@@ -567,6 +569,9 @@ func NewServer(cfg *config.Config) *Server {
 		}
 	}
 
+	hp, headerErr := headerpolicy.New(cfg.Headers)
+	s.headerPolicy = hp
+	s.initErr = errors.Join(s.initErr, headerErr)
 	if cfg.Analysis != nil && cfg.Analysis.Enabled {
 		m, err := analysis.New(*cfg.Analysis, nil)
 		s.analysis = m
@@ -799,18 +804,23 @@ func NewServer(cfg *config.Config) *Server {
 			*req = *req.WithContext(context.WithValue(req.Context(), tunnelIdentityKey{}, identity))
 			req.TLS = identity.TLS
 		}
+		s.prepareHeaders(req, false)
 		ctx.RoundTripper = goproxy.RoundTripperFunc(func(outgoing *http.Request, _ *goproxy.ProxyCtx) (*http.Response, error) {
 			return s.wrapTransport(p.Tr, false).RoundTrip(outgoing)
 		})
 		// Run Middleware Chain
 		for _, mw := range s.middleware {
 			r, resp := mw(req, ctx)
+			if r != nil && r != req {
+				r = preserveRequestTrust(r, req)
+			}
 			if resp != nil {
 				s.recordDecision(req, resp.StatusCode, "request middleware rejected traffic")
 				return r, resp
 			}
 			if r != nil {
 				req = r
+				ctx.Req = req
 			}
 		}
 
@@ -822,11 +832,24 @@ func NewServer(cfg *config.Config) *Server {
 	})
 
 	p.OnResponse().DoFunc(func(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
+		var originalRequest *http.Request
+		if resp != nil {
+			originalRequest = resp.Request
+		}
 		for _, mw := range s.respMiddleware {
 			resp = mw(resp, ctx)
 			if resp == nil {
 				return nil
 			}
+		}
+		if resp != nil {
+			resp.Request = originalRequest
+		}
+		if err := s.finalizeResponseHeaders(resp); err != nil {
+			if resp.Body != nil {
+				resp.Body.Close()
+			}
+			return goproxy.NewResponse(ctx.Req, "text/plain", http.StatusBadGateway, "Invalid response headers")
 		}
 		return resp
 	})
@@ -850,6 +873,7 @@ func (s *Server) GatewayHandler(w http.ResponseWriter, r *http.Request) {
 	defer span.End()
 	r = r.WithContext(ctx)
 	if r.Method == http.MethodConnect {
+		s.prepareHeaders(r, false)
 		s.handleConnectRequest(w, r)
 		return
 	}
@@ -874,6 +898,7 @@ func (s *Server) GatewayHandler(w http.ResponseWriter, r *http.Request) {
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		// L7 Application Edge Routing
 		if app, ok := s.compiledApps[r.Host]; ok {
+			s.prepareHeaders(r, true)
 			if len(s.middleware) > 0 {
 				if !s.applyGatewayRequestMiddleware(w, r) {
 					return
@@ -924,6 +949,7 @@ func (s *Server) GatewayHandler(w http.ResponseWriter, r *http.Request) {
 		if s.cfg.Features != nil && s.cfg.Features.ReverseProxy {
 			for _, route := range s.compiledRoutes {
 				if strings.HasPrefix(r.URL.Path, route.Path) {
+					s.prepareHeaders(r, true)
 					if len(s.middleware) > 0 {
 						if !s.applyGatewayRequestMiddleware(w, r) {
 							return
@@ -980,6 +1006,7 @@ func (s *Server) GatewayHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Forward proxy disabled", http.StatusForbidden)
 			return
 		}
+		s.prepareHeaders(r, false)
 		s.proxy.ServeHTTP(w, r)
 	}
 
@@ -1021,7 +1048,7 @@ func (s *Server) applyGatewayRequestMiddleware(w http.ResponseWriter, req *http.
 		updated, response := middleware(req, ctx)
 		if updated != nil {
 			if updated != req {
-				*req = *updated
+				*req = *preserveRequestTrust(updated, req)
 			}
 			ctx.Req = req
 		}

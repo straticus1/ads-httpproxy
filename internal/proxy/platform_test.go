@@ -138,7 +138,7 @@ func TestPlatformIdentityCannotBeSpoofedAndWorkersCaptureTraffic(t *testing.T) {
 	var calls atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		if r.Header.Get("X-Tenant-ID") != "" || r.Header.Get("X-Authenticated-User") != "alice" {
+		if r.Header.Get("X-Tenant-ID") != "" || r.Header.Get("X-Authenticated-User") != "" {
 			t.Errorf("untrusted identity forwarded: %v", r.Header)
 		}
 		for _, name := range []string{"X-Authenticated-Groups", "X-Groups", "X-Authenticated-Tenant", "X-Authenticated-Scopes"} {

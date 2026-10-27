@@ -5,6 +5,7 @@ import (
 	"ads-httpproxy/internal/adaptive"
 	"ads-httpproxy/internal/ai"
 	"ads-httpproxy/internal/analysis"
+	"ads-httpproxy/internal/headerpolicy"
 	"fmt"
 )
 
@@ -15,6 +16,9 @@ type GatewayTLSConfig struct {
 }
 
 func (c *Config) validatePlatform() error {
+	if err := headerpolicy.Validate(c.Headers); err != nil {
+		return err
+	}
 	if len(c.APIKeys) > 0 && c.ApiSecret == "changeme" {
 		return fmt.Errorf("replace or clear default api_secret before enabling scoped keys")
 	}

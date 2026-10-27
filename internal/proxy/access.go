@@ -13,6 +13,7 @@ import (
 
 	"ads-httpproxy/internal/access"
 	"ads-httpproxy/internal/auth"
+	"ads-httpproxy/internal/policy"
 	"github.com/elazarl/goproxy"
 	"golang.org/x/time/rate"
 )
@@ -84,12 +85,21 @@ func (a *actionLimits) allow(action string, n int) bool {
 	return l.Allow()
 }
 func (s *Server) applyPolicyActions(req *http.Request, actions []string, scope string) (int, error) {
+	requestOps, responseOps, err := policy.HeaderActions(actions)
+	if err != nil {
+		return 500, err
+	}
+	addHeaderActions(req, requestOps, responseOps)
 	for _, action := range actions {
 		name, arg, _ := strings.Cut(action, ":")
 		switch name {
 		case "redact_headers":
 			for _, h := range strings.Split(arg, ",") {
 				req.Header.Del(strings.TrimSpace(h))
+			}
+		case "set_header", "append_header", "remove_header", "response_set_header", "response_append_header", "response_remove_header":
+			if name == "remove_header" {
+				req.Header.Del(arg)
 			}
 		case "rate_limit":
 			n, err := strconv.Atoi(arg)

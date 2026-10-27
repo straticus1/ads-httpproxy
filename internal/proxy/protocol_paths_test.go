@@ -139,8 +139,8 @@ func TestProtocolAuthenticatedCONNECTCarriesIdentityWithoutCredentials(t *testin
 		if r.Header.Get("Proxy-Authorization") != "" {
 			t.Error("proxy credentials leaked upstream")
 		}
-		if r.Header.Get("X-Authenticated-User") != "alice" {
-			t.Error("verified identity lost inside CONNECT")
+		if r.Header.Get("X-Authenticated-User") != "" {
+			t.Error("verified identity leaked to forward-proxy origin")
 		}
 		fmt.Fprint(w, "secure response")
 	}))
@@ -160,6 +160,15 @@ func TestProtocolAuthenticatedCONNECTCarriesIdentityWithoutCredentials(t *testin
 	s := NewServer(cfg)
 	require.NoError(t, s.initErr)
 	defer s.Shutdown(context.Background())
+	s.middleware = append(s.middleware, func(r *http.Request, _ *goproxy.ProxyCtx) (*http.Request, *http.Response) {
+		if r.Method != http.MethodConnect {
+			p, ok := auth.PrincipalFromContext(r.Context())
+			if !ok || p.Subject != "alice" {
+				t.Error("verified tunnel principal lost before policy enforcement")
+			}
+		}
+		return r, nil
+	})
 	roots := x509.NewCertPool()
 	roots.AddCert(upstream.Certificate())
 	s.proxy.Tr.TLSClientConfig = &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}

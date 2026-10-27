@@ -54,12 +54,18 @@ func (s *Server) wrapTransport(next http.RoundTripper, chain bool) http.RoundTri
 	if s.httpCache != nil {
 		next = &cacheTransport{next: next, cache: s.httpCache}
 	}
+	if s.headerPolicy != nil {
+		next = &headerRequestTransport{s: s, next: next}
+	}
 	next = s.devtools.Wrap(next)
 	if s.aiGate != nil || s.adaptive != nil {
 		next = &enforcementTransport{s: s, next: next}
 	}
 	if s.scriptEngine != nil {
 		next = &scriptTransport{next: next, engine: s.scriptEngine}
+	}
+	if s.headerPolicy != nil {
+		next = &headerResponseTransport{s: s, next: next}
 	}
 	if s.analysis != nil {
 		next = &observationTransport{s: s, next: next}

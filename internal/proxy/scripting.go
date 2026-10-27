@@ -35,6 +35,7 @@ func (t *scriptTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 func (s *Server) processGatewayResponse(response *http.Response) error {
 	ctx := &goproxy.ProxyCtx{Req: response.Request, Resp: response, Proxy: s.proxy}
+	originalRequest := response.Request
 	current := response
 	for _, middleware := range s.respMiddleware {
 		current = middleware(current, ctx)
@@ -46,5 +47,6 @@ func (s *Server) processGatewayResponse(response *http.Response) error {
 	if current != response {
 		*response = *current
 	}
-	return nil
+	response.Request = originalRequest
+	return s.finalizeResponseHeaders(response)
 }
