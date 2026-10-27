@@ -21,9 +21,34 @@ def on_response(resp):
     return False
 ```
 
-Request fields are `method`, `url`, `host`, `remote`, and mutable `headers`.
-Response fields are `status_code` and mutable `headers`. Header values are
-strings; invalid names or CR/LF values are rejected. Return `False`, `None`, or
+Request fields are `method`, `url`, `host`, `remote`, mutable `headers`, and
+mutable `header_values`. Response fields are `status_code`, `headers`, and
+`header_values`. The compatible `headers` dictionary exposes the first value
+as a string; assigning a new string replaces all values for that field.
+`header_values` exposes lists of strings, preserving separate lines such as
+`Set-Cookie`. Untouched fields retain all original values. For example:
+
+```python
+def on_request(req):
+    req.headers.pop("Authorization", None)  # Strip credentials when required.
+    req.header_values["X-Labels"] = ["inspected", "allowed"]
+
+def on_response(resp):
+    resp.header_values.setdefault("Set-Cookie", []).append("seen=1; Secure; HttpOnly")
+    resp.headers.pop("X-Powered-By", None)
+```
+
+Use `.pop()` in either view to remove a field; setting an empty list in
+`header_values` also removes it. Views are independent snapshots: modifying
+the same field through both views in one callback is an error, even if the
+new values agree. Dictionary keys are case-sensitive; duplicate keys differing
+only by case are rejected. Use the existing canonical field spelling when
+editing a field. Invalid field names, control characters (including CR/LF),
+and changes to reserved forwarding, identity, framing, or hop-by-hop fields
+are rejected atomically. Scripts cannot inject credentials; removal of origin
+`Authorization` and `Cookie` is allowed. Unchanged protected fields remain intact.
+
+Return `False`, `None`, or
 `{"action":"allow"}` to allow; `True` or `{"action":"block"}` to block.
 `on_request` is required; `on_response` is optional. Hooks honor request context
 cancellation and have a 100,000-step execution limit. Globals are frozen to

@@ -3,10 +3,8 @@ package starlark
 import (
 	"context"
 	"fmt"
-	"golang.org/x/net/http/httpguts"
 	"net/http"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -91,38 +89,6 @@ func (e *StarlarkEngine) Reload() error {
 	return nil
 }
 
-func headerDict(headers http.Header) *starlark.Dict {
-	result := starlark.NewDict(len(headers))
-	for key := range headers {
-		_ = result.SetKey(starlark.String(key), starlark.String(headers.Get(key)))
-	}
-	return result
-}
-func applyHeaders(headers http.Header, values *starlark.Dict) error {
-	updated := make(map[string]string, values.Len())
-	for _, item := range values.Items() {
-		key, ok := starlark.AsString(item[0])
-		if !ok || !httpguts.ValidHeaderFieldName(key) {
-			return fmt.Errorf("invalid script header name")
-		}
-		value, ok := starlark.AsString(item[1])
-		if !ok || strings.ContainsAny(value, "\r\n") {
-			return fmt.Errorf("invalid script header value")
-		}
-		updated[http.CanonicalHeaderKey(key)] = value
-	}
-	for key := range headers {
-		if _, ok := updated[http.CanonicalHeaderKey(key)]; !ok {
-			headers.Del(key)
-		}
-	}
-	for key, value := range updated {
-		if headers.Get(key) != value {
-			headers.Set(key, value)
-		}
-	}
-	return nil
-}
 func (e *StarlarkEngine) call(ctx context.Context, hook string, value starlark.Value) error {
 	e.mu.RLock()
 	callback := e.globals[hook]
@@ -174,14 +140,18 @@ func (e *StarlarkEngine) call(ctx context.Context, hook string, value starlark.V
 	return fmt.Errorf("%s must return a boolean, None, or an action allow/block dictionary", hook)
 }
 func (e *StarlarkEngine) OnRequest(ctx context.Context, req *http.Request) error {
-	headers := headerDict(req.Header)
+	headers, headerValues := headerViews(req.Header)
 	reqData := starlarkstruct.FromStringDict(starlark.String("request"), starlark.StringDict{
-		"method": starlark.String(req.Method), "url": starlark.String(req.URL.String()), "host": starlark.String(req.Host), "remote": starlark.String(req.RemoteAddr), "headers": headers,
+		"method": starlark.String(req.Method), "url": starlark.String(req.URL.String()), "host": starlark.String(req.Host), "remote": starlark.String(req.RemoteAddr), "headers": headers, "header_values": headerValues,
 	})
 	if err := e.call(ctx, "on_request", reqData); err != nil {
 		return err
 	}
-	return applyHeaders(req.Header, headers)
+	updated, err := mergeHeaders(req.Header, headers, headerValues)
+	if err == nil {
+		req.Header = updated
+	}
+	return err
 }
 
 func (e *StarlarkEngine) starlarkCheckUrl(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
@@ -212,12 +182,16 @@ func (e *StarlarkEngine) OnResponse(ctx context.Context, resp *http.Response) er
 	if resp == nil {
 		return nil
 	}
-	headers := headerDict(resp.Header)
-	value := starlarkstruct.FromStringDict(starlark.String("response"), starlark.StringDict{"status_code": starlark.MakeInt(resp.StatusCode), "headers": headers})
+	headers, headerValues := headerViews(resp.Header)
+	value := starlarkstruct.FromStringDict(starlark.String("response"), starlark.StringDict{"status_code": starlark.MakeInt(resp.StatusCode), "headers": headers, "header_values": headerValues})
 	if err := e.call(ctx, "on_response", value); err != nil {
 		return err
 	}
-	return applyHeaders(resp.Header, headers)
+	updated, err := mergeHeaders(resp.Header, headers, headerValues)
+	if err == nil {
+		resp.Header = updated
+	}
+	return err
 }
 
 func (e *StarlarkEngine) startWatcher() {
