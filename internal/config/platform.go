@@ -15,6 +15,17 @@ type GatewayTLSConfig struct {
 }
 
 func (c *Config) validatePlatform() error {
+	if c.ConnectMode != "" && c.ConnectMode != "mitm" && c.ConnectMode != "tunnel" {
+		return fmt.Errorf("connect_mode must be mitm or tunnel")
+	}
+	if c.ControlPlane != nil {
+		if err := c.ControlPlane.Validate(); err != nil {
+			return err
+		}
+	}
+	if err := validateAPIKeys(c.APIKeys); err != nil {
+		return err
+	}
 	if c.Analysis != nil {
 		if err := analysis.Validate(*c.Analysis); err != nil {
 			return err

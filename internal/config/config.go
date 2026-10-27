@@ -57,6 +57,9 @@ type Config struct {
 	ApiAddr              string                    `json:"api_addr" yaml:"api_addr"`
 	GrpcAddr             string                    `json:"grpc_addr" yaml:"grpc_addr"`
 	ApiSecret            string                    `json:"api_secret" yaml:"api_secret"`
+	APIKeys              []ScopedAPIKey            `json:"api_keys" yaml:"api_keys"`
+	ControlPlane         *ControlPlaneConfig       `json:"control_plane" yaml:"control_plane"`
+	ConnectMode          string                    `json:"connect_mode" yaml:"connect_mode"`
 	ApiCert              string                    `json:"api_cert" yaml:"api_cert"`
 	ApiPrivKey           string                    `json:"api_privkey" yaml:"api_privkey"`
 	ApiUsers             map[string]string         `json:"api_users" yaml:"api_users"`
@@ -751,7 +754,7 @@ func (c *Config) Validate() error {
 		return errors.New("addr is required")
 	}
 
-	if !isLoopbackAddress(c.ApiAddr) && c.ApiClientCA == "" && len(c.ApiUsers) == 0 &&
+	if c.ApiAddr != "" && !isLoopbackAddress(c.ApiAddr) && c.ApiClientCA == "" && len(c.ApiUsers) == 0 &&
 		(c.ApiSecret == "" || c.ApiSecret == "changeme") {
 		return errors.New("api_secret must be changed before binding the admin API to a non-loopback address")
 	}
@@ -785,7 +788,7 @@ func (c *Config) Validate() error {
 				// But maybe they want to plug in other things later.
 				// Let's just ensure mechanism is valid.
 			}
-		case "none", "basic":
+		case "", "none", "basic", "mtls", "ldap", "ad":
 		case "oidc":
 			if c.Auth.OIDC == nil || c.Auth.OIDC.Issuer == "" || c.Auth.OIDC.ClientID == "" {
 				return errors.New("oidc auth requires issuer and client_id")
